@@ -19,9 +19,11 @@ export interface SweeperDeps {
   readonly logger: Logger;
 }
 
-/** Only the two genuinely in-flight statuses — PENDING and PDF_READY are momentary waiting
- * states a job picks up almost immediately, not places an invoice gets stuck. */
-const STUCK_STATUSES: readonly InvoiceStatus[] = ["PDF_RENDERING", "EMAIL_SENDING"];
+ * a worker may genuinely still be mid-job there, so re-adding a job risks racing it; a
+ * genuinely stuck one is instead caught by the staleBefore-gated self-transition inside
+ * invoicePdf.service.ts / invoiceEmail.service.ts, surfaced via a warn log, and resolved by a
+ * human through POST /api/invoices/:id/retry. */
+const STUCK_STATUSES: readonly InvoiceStatus[] = ["PENDING", "PDF_READY"];
 
 export async function sweepStuckInvoices(deps: SweeperDeps): Promise<number> {
   const updatedBefore = new Date(Date.now() - deps.stuckTimeoutMs);
@@ -33,7 +35,7 @@ export async function sweepStuckInvoices(deps: SweeperDeps): Promise<number> {
 
   for (const invoice of stuckInvoices) {
     try {
-      if (invoice.status === "PDF_RENDERING") {
+      if (invoice.status === "PENDING") {
         await deps.pdfQueue.add("render", { invoiceId: invoice.id }, { jobId: `pdf-${invoice.id}` });
       } else {
         await deps.emailQueue.add("send", { invoiceId: invoice.id }, { jobId: `email-${invoice.id}` });
