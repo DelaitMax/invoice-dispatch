@@ -70,10 +70,19 @@ export async function renderAndStoreInvoicePdf(invoiceId: string, deps: PdfDeps)
 
   // PDF_RENDERING is a valid source for itself: a BullMQ retry or a sweeper re-pickup runs
   // this function again on an invoice a previous attempt already moved out of PENDING before
-  // failing partway through. A lost claim here means another attempt (or the
-  // email worker moving it past PDF_READY already) genuinely owns this invoice right now —
-  // not an error, just nothing left for this call to do.
-  const claimed = await deps.status.claim(deps.db, deps, invoiceId, ["PENDING", "PDF_RENDERING"], "PDF_RENDERING");
+  // failing partway through. staleBefore gates that self-transition on
+  // staleness (see updateInvoiceStatus) so a truly concurrent duplicate claim — not just a
+  // legitimate retry — can never also succeed: this render attempt can't still be genuinely
+  // in flight past its own timeoutMs.
+  const claimed = await deps.status.claim(
+    deps.db,
+    deps,
+    invoiceId,
+    ["PENDING", "PDF_RENDERING"],
+    "PDF_RENDERING",
+    {},
+    { staleBefore: new Date(Date.now() - deps.timeoutMs) },
+  );
 
   if (!claimed) {
     deps.logger.warn("Skipping PDF render: could not claim the invoice (already claimed or moved on)", {

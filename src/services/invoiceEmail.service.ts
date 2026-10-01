@@ -25,6 +25,11 @@ export interface EmailDeps {
   readonly status: StatusService;
   readonly mailer: Mailer;
   readonly sender: SenderProfile;
+  /** How long an EMAIL_SENDING claim may sit before it's considered stale enough to
+   * re-claim — see updateInvoiceStatus's doc comment
+   * for why this guard is what keeps a legitimate retry from also admitting a truly
+   * concurrent duplicate. */
+  readonly staleAfterMs: number;
   readonly logger: Logger;
 }
 
@@ -67,10 +72,21 @@ export async function sendInvoiceEmail(invoiceId: string, isFinalAttempt: boolea
 
   // PDF_READY is the normal source; EMAIL_SENDING is a retry or sweeper re-pickup landing on
   // an invoice a previous attempt already moved out of PDF_READY (same reasoning as the PDF
-  // worker's self-transition — see invoicePdf.service.ts). A lost claim here is exactly the
-  // "same email job ran twice concurrently" case: the other attempt owns it,
-  // so this returns without ever calling the mailer — no double send.
-  const claimed = await deps.status.claim(deps.db, deps, invoiceId, ["PDF_READY", "EMAIL_SENDING"], "EMAIL_SENDING");
+  // worker's self-transition — see invoicePdf.service.ts). staleBefore gates that
+  // self-transition on staleness: this is exactly the "same email job ran twice
+  // concurrently" case — without the guard, both concurrent callers would
+  // match and both send; with it, only a claim older than staleAfterMs can be re-claimed, so
+  // the second, still-live concurrent call loses the race and returns without ever calling
+  // the mailer.
+  const claimed = await deps.status.claim(
+    deps.db,
+    deps,
+    invoiceId,
+    ["PDF_READY", "EMAIL_SENDING"],
+    "EMAIL_SENDING",
+    {},
+    { staleBefore: new Date(Date.now() - deps.staleAfterMs) },
+  );
 
   if (!claimed) {
     deps.logger.warn("Skipping email send: could not claim the invoice (already claimed or moved on)", {

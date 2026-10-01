@@ -46,6 +46,7 @@ describe("claim", () => {
       ["PENDING"],
       "PDF_RENDERING",
       {},
+      {},
     );
     expect(insertInvoiceEventMock).toHaveBeenCalledWith(
       expect.anything(),
@@ -53,7 +54,7 @@ describe("claim", () => {
     );
   });
 
-  it("allows EMAIL_SENDING -> EMAIL_SENDING as a valid self-transition (retry/sweeper re-pickup)", async () => {
+  it("passes from/to through unchanged for a self-transition request (staleness gating happens in the repository, not here)", async () => {
     const updatedRow = { id: INVOICE_ID, status: "EMAIL_SENDING" };
     updateInvoiceStatusMock.mockResolvedValue(updatedRow);
 
@@ -72,6 +73,31 @@ describe("claim", () => {
       ["PDF_READY", "EMAIL_SENDING"],
       "EMAIL_SENDING",
       {},
+      {},
+    );
+  });
+
+  it("forwards a staleBefore option through to the repository call", async () => {
+    updateInvoiceStatusMock.mockResolvedValue({ id: INVOICE_ID, status: "EMAIL_SENDING" });
+    const staleBefore = new Date("2026-01-01T00:00:00.000Z");
+
+    await claim(
+      fakeDb(),
+      { logger: fakeLogger() },
+      INVOICE_ID,
+      ["PDF_READY", "EMAIL_SENDING"],
+      "EMAIL_SENDING",
+      {},
+      { staleBefore },
+    );
+
+    expect(updateInvoiceStatusMock).toHaveBeenCalledWith(
+      expect.anything(),
+      INVOICE_ID,
+      ["PDF_READY", "EMAIL_SENDING"],
+      "EMAIL_SENDING",
+      {},
+      { staleBefore },
     );
   });
 
@@ -98,10 +124,17 @@ describe("claim", () => {
       providerMessageId: "msg-1",
     });
 
-    expect(updateInvoiceStatusMock).toHaveBeenCalledWith(expect.anything(), INVOICE_ID, ["EMAIL_SENDING"], "SENT", {
-      sentAt: new Date("2026-01-01T00:00:00.000Z"),
-      providerMessageId: "msg-1",
-    });
+    expect(updateInvoiceStatusMock).toHaveBeenCalledWith(
+      expect.anything(),
+      INVOICE_ID,
+      ["EMAIL_SENDING"],
+      "SENT",
+      {
+        sentAt: new Date("2026-01-01T00:00:00.000Z"),
+        providerMessageId: "msg-1",
+      },
+      {},
+    );
   });
 });
 

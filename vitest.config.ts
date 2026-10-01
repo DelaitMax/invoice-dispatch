@@ -12,6 +12,12 @@ export default defineConfig({
     environment: "node",
     include: ["tests/**/*.test.ts"],
     setupFiles: ["tests/setupEnv.ts"],
+    // Integration tests hit a real, shared Postgres/Redis — a single worker keeps test files
+    // from racing each other's truncate/seed calls against that shared state. This is a test
+    // hygiene measure, not a substitute for correct concurrency handling in the app itself
+    // (see updateInvoiceStatus's staleBefore guard for that).
+    fileParallelism: false,
+    maxWorkers: 1,
     hookTimeout: 30_000,
     testTimeout: 30_000,
     passWithNoTests: false,

@@ -3,6 +3,7 @@ import { insertInvoiceEvent } from "@/repositories/invoiceEvents.repository";
 import {
   type InvoiceRow,
   type InvoiceStatusPatch,
+  type UpdateInvoiceStatusOptions,
   findInvoiceById,
   updateInvoiceStatus,
 } from "@/repositories/invoices.repository";
@@ -19,6 +20,15 @@ export interface StatusService {
   readonly transition: typeof transition;
 }
 
+/**
+ *
+ *
+ * When `from` includes `to` (a legitimate sequential retry re-entering its own in-flight
+ * status), pass `options.staleBefore` — see updateInvoiceStatus's doc comment for why that
+ * guard is required to keep a *self*-transition from also admitting a truly concurrent
+ * duplicate claim.
+ *
+ */
 export async function claim(
   db: Database,
   deps: TransitionDeps,
@@ -26,9 +36,10 @@ export async function claim(
   from: readonly InvoiceStatus[],
   to: InvoiceStatus,
   patch: InvoiceStatusPatch = {},
+  options: UpdateInvoiceStatusOptions = {},
 ): Promise<InvoiceRow | null> {
   return db.transaction(async (tx) => {
-    const updated = await updateInvoiceStatus(tx, invoiceId, from, to, patch);
+    const updated = await updateInvoiceStatus(tx, invoiceId, from, to, patch, options);
 
     if (!updated) {
       const current = await findInvoiceById(tx, invoiceId);

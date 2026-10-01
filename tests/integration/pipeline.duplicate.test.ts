@@ -94,6 +94,7 @@ describe("pipeline.duplicate — the key test of this project", () => {
       status: { claim, transition },
       mailer: fakeMailer,
       sender: senderProfile,
+      staleAfterMs: 120_000,
       logger,
     };
 
@@ -126,6 +127,7 @@ describe("pipeline.duplicate — the key test of this project", () => {
       status: { claim, transition },
       mailer: fakeMailer,
       sender: senderProfile,
+      staleAfterMs: 120_000,
       logger,
     };
 

@@ -16,7 +16,11 @@ export function createEmailWorker(deps: EmailDeps): Worker<EmailJobData> {
     async (job: Job<EmailJobData>) => {
       await sendInvoiceEmail(job.data.invoiceId, isFinalAttempt(job), deps);
     },
-    { connection: createQueueConnection(), concurrency: env.QUEUE_EMAIL_CONCURRENCY },
+    {
+      connection: createQueueConnection(),
+      concurrency: env.QUEUE_EMAIL_CONCURRENCY,
+      limiter: { max: env.EMAIL_RATE_LIMIT_MAX, duration: env.EMAIL_RATE_LIMIT_DURATION_MS },
+    },
   );
 
   worker.on("failed", (job, err) => {

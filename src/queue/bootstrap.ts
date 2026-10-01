@@ -65,6 +65,7 @@ export async function startWorkers(deps: BootstrapWorkersDeps): Promise<WorkerHa
     status: deps.status,
     mailer: deps.mailer,
     sender: deps.sender,
+    staleAfterMs: env.QUEUE_STUCK_TIMEOUT_MS,
     logger: deps.logger,
   });
 

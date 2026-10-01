@@ -38,6 +38,7 @@ function buildDeps(overrides: Partial<EmailDeps> = {}): EmailDeps {
       phone: undefined,
       address: { line1: "1 St", line2: undefined, city: "City", postalCode: undefined, country: undefined },
     },
+    staleAfterMs: 120_000,
     logger: fakeLogger(),
     ...overrides,
   };
