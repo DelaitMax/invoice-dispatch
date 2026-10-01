@@ -1,0 +1,33 @@
+services:
+  postgres:
+    ports:
+      - "5432:5432"
+
+  redis:
+    ports:
+      - "6379:6379"
+
+  api:
+    build:
+      target: build
+    command: sh -c "pnpm db:migrate && pnpm dev"
+    environment:
+      MAIL_DRIVER: console
+      LOG_PRETTY: "true"
+      DOCS_ENABLED: "true"
+    volumes:
+      - ./:/app
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+
+  worker:
+    build:
+      target: build
+    command: pnpm dev:worker
+    environment:
+      MAIL_DRIVER: console
+      LOG_PRETTY: "true"
+    volumes:
+      - ./:/app
+      - /app/node_modules

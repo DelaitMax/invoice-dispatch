@@ -1,0 +1,20 @@
+services:
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?must be set}
+
+  api:
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      MAIL_DRIVER: mailgun
+      MAILGUN_API_KEY: ${MAILGUN_API_KEY:?must be set}
+      MAILGUN_DOMAIN: ${MAILGUN_DOMAIN:?must be set}
+      API_KEY: ${API_KEY:?must be set}
+      DOCS_ENABLED: "false"
+
+  worker:
+    environment:
+      MAIL_DRIVER: mailgun
+      MAILGUN_API_KEY: ${MAILGUN_API_KEY:?must be set}
+      MAILGUN_DOMAIN: ${MAILGUN_DOMAIN:?must be set}
