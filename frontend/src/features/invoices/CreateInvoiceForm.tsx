@@ -1,4 +1,4 @@
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useRef, useState } from "react";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 import { ErrorBanner } from "@/components/ErrorBanner";
@@ -37,6 +37,7 @@ export function CreateInvoiceForm({ onCreated }: CreateInvoiceFormProps) {
   const [currency, setCurrency] = useState<Currency>("USD");
   const [items, setItems] = useState<ItemRow[]>([{ ...EMPTY_ITEM }]);
   const [notes, setNotes] = useState("");
+  const isSubmittingRef = useRef(false);
 
   const estimatedTotalMinor = items.reduce((sum, item) => {
     const quantity = Number.parseInt(item.quantity, 10) || 0;
@@ -58,6 +59,9 @@ export function CreateInvoiceForm({ onCreated }: CreateInvoiceFormProps) {
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
 
+    if (isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
+
     try {
       const created = await createInvoice({
         input: {
@@ -70,8 +74,6 @@ export function CreateInvoiceForm({ onCreated }: CreateInvoiceFormProps) {
           })),
           ...(notes.trim() ? { notes: notes.trim() } : {}),
         },
-        // One key per submit: a double click or a network retry
-        // replays the same key and the server returns the original invoice instead of a second.
         idempotencyKey: crypto.randomUUID(),
       }).unwrap();
 
@@ -85,6 +87,8 @@ export function CreateInvoiceForm({ onCreated }: CreateInvoiceFormProps) {
       setNotes("");
       onCreated(created.invoiceId);
     } catch {
+    } finally {
+      isSubmittingRef.current = false;
     }
   }
 
