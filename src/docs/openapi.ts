@@ -12,8 +12,10 @@ export function buildDocument() {
       title: "Invoice Dispatch API",
       version: "0.1.0",
       description:
-        "Accepts invoices for existing clients, renders a PDF, and emails it. Auth is an " +
-        "optional X-API-Key header (set only when the server has API_KEY configured).",
+        "Accepts invoices for existing clients, renders a PDF, and emails it. " +
+        "/api/invoices/* requires a logged-in session (see /auth/*); an optional X-API-Key " +
+        "header (set only when the server has API_KEY configured) is enforced on top of that, " +
+        "not instead of it.",
     },
     servers: [{ url: "/", description: "Same origin as this docs page" }],
   });
