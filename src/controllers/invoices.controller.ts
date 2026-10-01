@@ -5,6 +5,7 @@ import { senderProfile } from "@/config/sender";
 import { db } from "@/db/client";
 import { pdfQueue } from "@/queue/pdfQueue";
 import { findClientByEmailWithCompany } from "@/repositories/clients.repository";
+import { findInvoiceDocument } from "@/repositories/invoiceDocuments.repository";
 import { insertInvoiceEvent } from "@/repositories/invoiceEvents.repository";
 import { insertInvoiceItems, listInvoiceItems } from "@/repositories/invoiceItems.repository";
 import { allocateInvoiceNumber } from "@/repositories/invoiceNumbers.repository";
@@ -12,6 +13,7 @@ import { insertInvoiceRequest, updateInvoiceRequestOutcome } from "@/repositorie
 import { findInvoiceByIdempotencyKey, findInvoiceById, insertInvoice } from "@/repositories/invoices.repository";
 import { createInvoiceBodySchema } from "@/schemas/invoices.schema";
 import { createInvoice, type IntakeDeps } from "@/services/invoiceIntake.service";
+import { transition } from "@/services/invoiceStatus.service";
 import type { BillingSnapshotCompany } from "@/types/invoice.types";
 import { AppError } from "@/utils/AppError";
 import { getClientIp } from "@/utils/getClientIp";
@@ -117,4 +119,57 @@ export async function getInvoiceHandler(req: Request, res: Response): Promise<vo
     sentAt: invoice.sentAt ? invoice.sentAt.toISOString() : null,
     lastError: invoice.lastError,
   });
+}
+
+export async function getInvoicePdfHandler(req: Request, res: Response): Promise<void> {
+  const { id } = invoiceIdParamsSchema.parse(req.params);
+
+  const invoice = await findInvoiceById(db, id);
+
+  if (!invoice) {
+    throw AppError.notFound(`Invoice ${id} not found`, "INVOICE_NOT_FOUND");
+  }
+
+  const document = await findInvoiceDocument(db, id);
+
+  if (!document) {
+    throw AppError.conflict(`PDF for invoice ${id} is not ready yet`, "PDF_NOT_READY");
+  }
+
+  res
+    .status(StatusCodes.OK)
+    .header("Content-Type", "application/pdf")
+    .header("Content-Disposition", `attachment; filename="${invoice.invoiceNumber}.pdf"`)
+    .send(document.content);
+}
+
+export async function retryInvoiceHandler(req: Request, res: Response): Promise<void> {
+  const { id } = invoiceIdParamsSchema.parse(req.params);
+
+  const invoice = await findInvoiceById(db, id);
+
+  if (!invoice) {
+    throw AppError.notFound(`Invoice ${id} not found`, "INVOICE_NOT_FOUND");
+  }
+
+  let updated;
+  try {
+    updated = await transition(db, { logger }, id, ["FAILED"], "PENDING", { lastError: null });
+  } catch (err) {
+    if (err instanceof AppError && err.statusCode === StatusCodes.CONFLICT) {
+      throw AppError.conflict(`Invoice ${id} is not in a retryable state`, "INVOICE_NOT_RETRYABLE");
+    }
+    throw err;
+  }
+
+  try {
+    await pdfQueue.add("render", { invoiceId: id }, { jobId: `pdf-${id}` });
+  } catch (err) {
+    logger.error("Failed to enqueue PDF render job on retry; the sweeper will pick this invoice up", {
+      invoiceId: id,
+      error: err instanceof Error ? { message: err.message, stack: err.stack } : { value: err },
+    });
+  }
+
+  res.status(StatusCodes.ACCEPTED).json({ invoiceId: updated.id, status: updated.status });
 }

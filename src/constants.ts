@@ -19,10 +19,6 @@ export const QUEUE_NAME_EMAIL = "invoice-email";
 export const JOB_NAME_RENDER_PDF = "render";
 export const JOB_NAME_SEND_EMAIL = "send";
 
-/** How many finished jobs BullMQ keeps around per queue, for observability, before trimming. */
-export const QUEUE_KEEP_COMPLETED_JOBS = 1_000;
-export const QUEUE_KEEP_FAILED_JOBS = 5_000;
-
 export const SWEEPER_BATCH_SIZE = 100;
 
 export const REQUEST_BODY_LIMIT = "256kb";
