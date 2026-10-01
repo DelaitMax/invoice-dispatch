@@ -101,14 +101,23 @@ function JournalRow({ entry, onRemoved }: { entry: JournalEntry; onRemoved: () =
             <StatusBadge status={data.status} />
           </>
         ) : notFound ? (
-          <span className="text-xs text-danger">Не найден на сервере</span>
+          <span className="text-xs text-danger">Не найден на сервере — убрать запись из журнала?</span>
         ) : (
           <Spinner label="" />
         )}
 
         <div className="flex items-center gap-2">
-          {canDownload && (
+          {canDownload ? (
             <a href={invoicePdfUrl(entry.invoiceId)} className="text-sm text-accent hover:underline">
+              Скачать PDF
+            </a>
+          ) : (
+            <a
+              role="link"
+              aria-disabled="true"
+              title="PDF ещё не готов"
+              className="cursor-not-allowed text-sm text-ink-faint"
+            >
               Скачать PDF
             </a>
           )}

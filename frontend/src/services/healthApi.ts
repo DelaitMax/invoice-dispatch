@@ -14,3 +14,8 @@ const healthApi = api.injectEndpoints({
 });
 
 export const { useGetReadinessQuery } = healthApi;
+
+export function useIsServiceUnavailable(): boolean {
+  const { data, isError } = useGetReadinessQuery(undefined, { pollingInterval: 30_000 });
+  return isError || data?.status === "error";
+}
