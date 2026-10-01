@@ -16,6 +16,7 @@ export type NewInvoiceInput = Pick<
   | "totalMinor"
   | "billingSnapshot"
   | "notes"
+  | "issuedAt"
   | "dueAt"
   | "idempotencyKey"
   | "requestHash"
