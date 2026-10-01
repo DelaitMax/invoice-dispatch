@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/Button";
+import { ToastViewport } from "@/features/toasts/ToastViewport";
 import { useGetCurrentUserQuery, useLogoutMutation } from "@/features/auth/authApi";
 import { useGetReadinessQuery } from "@/services/healthApi";
 
@@ -55,6 +56,7 @@ export function Layout({ children }: { children: ReactNode }) {
         </div>
       </header>
       <main className="mx-auto w-full max-w-3xl flex-1 px-6 py-8">{children}</main>
+      <ToastViewport />
     </div>
   );
 }
