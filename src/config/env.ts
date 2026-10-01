@@ -33,6 +33,13 @@ const commonEnvSchema = z.object({
   API_KEY: z.string().min(1).optional(),
   DOCS_ENABLED: optionalBooleanString,
 
+  JWT_SECRET: z.string().min(32, "JWT_SECRET must be at least 32 characters"),
+  JWT_COOKIE_NAME: z.string().min(1).default("auth_token"),
+  JWT_EXPIRES_IN_SECONDS: z.coerce.number().int().positive().default(604_800),
+
+  ADMIN_EMAIL: z.string().trim().toLowerCase().email().optional(),
+  ADMIN_PASSWORD: z.string().min(8).max(128).optional(),
+
   MAIL_FROM_NAME: z.string().min(1, "MAIL_FROM_NAME is required"),
   MAIL_FROM_EMAIL: z.string().trim().toLowerCase().email("MAIL_FROM_EMAIL must be a valid email address"),
 
@@ -64,6 +71,7 @@ const commonEnvSchema = z.object({
 
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(30),
+  AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
   SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
 });
 
@@ -99,6 +107,12 @@ function loadEnv(): Env {
     const fieldErrors = parsed.error.flatten().fieldErrors;
     console.error("Invalid environment variables:", fieldErrors);
     throw new Error(`Invalid environment variables: ${Object.keys(fieldErrors).join(", ")}`);
+  }
+
+  if (Boolean(parsed.data.ADMIN_EMAIL) !== Boolean(parsed.data.ADMIN_PASSWORD)) {
+    const message = "ADMIN_EMAIL and ADMIN_PASSWORD must be set together, or not at all";
+    console.error(message);
+    throw new Error(message);
   }
 
   return parsed.data;

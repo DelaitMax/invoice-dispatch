@@ -6,3 +6,4 @@ export * from "./invoiceItems";
 export * from "./invoiceDocuments";
 export * from "./invoiceRequests";
 export * from "./invoiceEvents";
+export * from "./users";

@@ -139,3 +139,13 @@ CREATE INDEX "invoice_requests_received_at_idx" ON "invoice_requests" USING btre
 CREATE INDEX "invoice_requests_invoice_id_idx" ON "invoice_requests" USING btree ("invoice_id");
 
 CREATE INDEX "invoice_events_invoice_id_idx" ON "invoice_events" USING btree ("invoice_id","created_at");
+CREATE TYPE "public"."user_role" AS ENUM('admin', 'user');
+
+CREATE TABLE "users" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"email" text NOT NULL,
+	"password_hash" text NOT NULL,
+	"role" "user_role" DEFAULT 'user' NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "users_email_unique" UNIQUE("email")
+);
