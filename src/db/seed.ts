@@ -1,4 +1,7 @@
 import "dotenv/config";
+import { env } from "@/config/env";
+import { findUserByEmail, insertUser } from "@/repositories/users.repository";
+import { hashPassword } from "@/utils/password";
 import { db, closeDb } from "./client";
 import { clients, companies } from "./schema";
 import { logger } from "@/utils/logger";
@@ -50,6 +53,17 @@ async function main(): Promise<void> {
   await db.insert(clients).values(SEED_CLIENTS).onConflictDoNothing({ target: clients.email });
 
   logger.info("Seed complete", { companies: SEED_COMPANIES.length, clients: SEED_CLIENTS.length });
+
+  if (env.ADMIN_EMAIL && env.ADMIN_PASSWORD) {
+    const existing = await findUserByEmail(db, env.ADMIN_EMAIL);
+    if (existing) {
+      logger.info("Admin bootstrap skipped: user already exists", { email: env.ADMIN_EMAIL });
+    } else {
+      const passwordHash = await hashPassword(env.ADMIN_PASSWORD);
+      await insertUser(db, { email: env.ADMIN_EMAIL, passwordHash, role: "admin" });
+      logger.info("Admin bootstrap complete", { email: env.ADMIN_EMAIL });
+    }
+  }
 }
 
 main()
