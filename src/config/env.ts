@@ -79,16 +79,21 @@ const consoleDriverSchema = z.object({
   MAIL_OUTBOX_DIR: z.string().min(1).default("./tmp/outbox"),
 });
 
-const mailDriverSchema = z.discriminatedUnion("MAIL_DRIVER", [mailgunDriverSchema, consoleDriverSchema]);
+const mailDriverSchema = z
+  .discriminatedUnion("MAIL_DRIVER", [
+    commonEnvSchema.merge(mailgunDriverSchema),
+    commonEnvSchema.merge(consoleDriverSchema),
+  ])
+  .transform((data) => {
+    const { DOCS_ENABLED, ...rest } = data;
+    const docsEnabled = DOCS_ENABLED !== undefined ? DOCS_ENABLED === "true" : rest.NODE_ENV !== "production";
+    return { ...rest, DOCS_ENABLED: docsEnabled };
+  });
 
-const envSchema = z.intersection(commonEnvSchema, mailDriverSchema);
-
-type ParsedEnv = z.infer<typeof envSchema>;
-
-export type Env = Omit<ParsedEnv, "DOCS_ENABLED"> & { DOCS_ENABLED: boolean };
+export type Env = z.infer<typeof mailDriverSchema>;
 
 function loadEnv(): Env {
-  const parsed = envSchema.safeParse(process.env);
+  const parsed = mailDriverSchema.safeParse(process.env);
 
   if (!parsed.success) {
     const fieldErrors = parsed.error.flatten().fieldErrors;
@@ -96,10 +101,7 @@ function loadEnv(): Env {
     throw new Error(`Invalid environment variables: ${Object.keys(fieldErrors).join(", ")}`);
   }
 
-  const { DOCS_ENABLED, ...rest } = parsed.data;
-  const docsEnabled = DOCS_ENABLED !== undefined ? DOCS_ENABLED === "true" : rest.NODE_ENV !== "production";
-
-  return { ...rest, DOCS_ENABLED: docsEnabled };
+  return parsed.data;
 }
 
 export const env = loadEnv();
