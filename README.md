@@ -1,0 +1,301 @@
+# Invoice Dispatch
+
+Accepts an invoice request for an existing client, renders it to a PDF, and emails it —
+asynchronously, reliably, and idempotently.
+This README is the practical "how do I run this" guide, plus a summary of the
+design decisions.
+
+## Contents
+
+- [Quickstart](#quickstart)
+- [What it does](#what-it-does)
+- [Architecture](#architecture)
+- [API reference](#api-reference)
+- [Configuration](#configuration)
+- [Local development without Docker](#local-development-without-docker)
+- [Testing](#testing)
+- [Design decisions](#design-decisions)
+- [Engineering principles](#engineering-principles)
+- [Known limitations / explicitly out of scope](#known-limitations--explicitly-out-of-scope)
+
+## Quickstart
+
+Requires Docker and Docker Compose.
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+That's it — `docker compose up` brings up Postgres, Redis, the API, and the worker; runs
+migrations automatically; and (in dev, via `docker-compose.override.yml`, which is loaded
+automatically) uses the `console` mail driver, so no Mailgun account is needed to see the
+whole pipeline work.
+
+Seed the demo clients (idempotent — safe to run more than once):
+
+```bash
+docker compose exec api pnpm db:seed
+```
+
+This creates 3 companies and 5 clients, one of them (`mia.wallace@example.com`) with no
+company, to exercise that branch of the PDF/email templates. The others:
+`john.doe@acme.example`, `jane.smith@acme.example` (Acme Inc.), `hank.scorpio@globex.example`
+(Globex Corporation), `peter.gibbons@initech.example` (Initech LLC).
+
+Create an invoice:
+
+```bash
+curl -s -X POST http://localhost:3000/api/invoices \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: demo-key-1" \
+  -d '{
+    "email": "john.doe@acme.example",
+    "items": [
+      { "description": "Website redesign", "quantity": 1, "unitAmountMinor": 150000 },
+      { "description": "Hosting (3 months)", "quantity": 3, "unitAmountMinor": 2000 }
+    ],
+    "notes": "Thanks for your business!"
+  }'
+```
+
+You'll get back `202` with an `invoiceId`. Within a few seconds the worker renders the PDF and
+"sends" the email — with `MAIL_DRIVER=console` (the dev default), nothing actually goes out
+over the network; instead, look in `./tmp/outbox/` for the rendered email body (`.html`) and
+the PDF attachment, or just tail the worker's logs.
+
+Check on it:
+
+```bash
+curl -s http://localhost:3000/api/invoices/<invoiceId> | jq
+curl -s http://localhost:3000/api/invoices/<invoiceId>/pdf -o invoice.pdf   # once status is PDF_READY or later
+```
+
+Swagger UI is at `http://localhost:3000/docs` in dev (off by default in production —
+see [Configuration](#configuration)).
+
+## What it does
+
+1. `POST /api/invoices` — you give it a client's email and line items; it looks the client up
+   (this service never creates clients — that's a separate concern, seeded/managed
+   elsewhere), computes totals itself, allocates a gapless per-year invoice number, and
+   returns `202` immediately. The heavy lifting happens in the background.
+2. A worker process renders the invoice to a PDF (headless Chromium via Puppeteer) and stores
+   it in Postgres.
+3. The same worker process emails the PDF to the client (Mailgun in production, or a
+   `console` driver that just writes files locally for dev/test).
+4. `GET /api/invoices/:id` reports where things stand at every step: `PENDING` →
+   `PDF_RENDERING` → `PDF_READY` → `EMAIL_SENDING` → `SENT`, or `FAILED` with a reason.
+5. Retries, a stuck-invoice sweeper, idempotent request handling, and structured logging round
+   out the "actually reliable" part of the system.
+
+## Architecture
+
+```
+                POST /api/invoices
+                       │
+                       ▼
+              ┌─────────────────┐        writes an audit row first,
+              │   api process   │        no matter what happens next
+              │  (Express)      │
+              └────────┬────────┘
+                       │ enqueues "render" job
+                       ▼
+              ┌─────────────────┐   PENDING → PDF_RENDERING
+              │  worker process │─────────────────────────┐
+              │                 │                          ▼
+              │  ┌───────────┐  │                  renders HTML (Handlebars)
+              │  │ pdf worker│──┼─── Puppeteer ───▶ HTML → PDF bytes
+              │  └───────────┘  │                          │
+              │        │        │                  stores in Postgres (bytea)
+              │        ▼        │                          │
+              │  enqueues "send" job          PDF_RENDERING → PDF_READY
+              │        │        │
+              │  ┌───────────┐  │
+              │  │email worker│─┼─── Mailgun / console ───▶ sends the email
+              │  └───────────┘  │
+              │                 │            PDF_READY → EMAIL_SENDING → SENT
+              │  ┌───────────┐  │
+              │  │  sweeper  │──┼─── re-enqueues anything stuck too long
+              │  └───────────┘  │    in an in-flight status (lost enqueue,
+              └─────────────────┘    crashed worker, etc.)
+```
+
+Both processes run from the same image (`Dockerfile`); only the command differs
+(`node dist/index.js` vs `node dist/worker.js`). Everything both processes need to agree on —
+job payload shapes, the status machine, the repository layer — is shared code, not duplicated.
+
+**The status machine** (`invoices.status`): `PENDING → PDF_RENDERING → PDF_READY →
+EMAIL_SENDING → SENT`, with `FAILED` reachable from any in-flight state and `POST
+/:id/retry` resetting `FAILED → PENDING`. Every transition goes through one function
+(`src/services/invoiceStatus.service.ts`) built around a single conditional SQL statement —
+see [ADR-2](#design-decisions) below for why that matters more than it sounds like it should.
+
+## API reference
+
+Full OpenAPI document at `/docs/openapi.json` (or browse `/docs` in dev). Summary:
+
+| Method | Path                      | Notes                                                                                                                                                                                                                                                                                                               |
+| ------ | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST` | `/api/invoices`           | `202` (or `200` on an idempotent replay). Body: `{ email, items: [{ description, quantity?, unitAmountMinor }], currency?, notes? }`. `.strict()` — sending `totalMinor` or an item's `amountMinor` is a `400`, not a silently ignored field, because those are server-computed. Optional `Idempotency-Key` header. |
+| `GET`  | `/api/invoices/:id`       | Status, computed totals, line items, and the client/company data as it was billed (from the frozen snapshot — see ADR-8), not a live lookup.                                                                                                                                                                        |
+| `GET`  | `/api/invoices/:id/pdf`   | `200` + the PDF once it exists; `409 PDF_NOT_READY` before that.                                                                                                                                                                                                                                                    |
+| `POST` | `/api/invoices/:id/retry` | Only from `FAILED`; otherwise `409 INVOICE_NOT_RETRYABLE`.                                                                                                                                                                                                                                                          |
+| `GET`  | `/health`                 | Liveness — always `200`, never touches a dependency.                                                                                                                                                                                                                                                                |
+| `GET`  | `/health/ready`           | Readiness — Postgres `SELECT 1` + Redis `PING`; `503` with a per-component breakdown if either is down.                                                                                                                                                                                                             |
+
+All `/api/invoices*` routes require an `X-API-Key` header **only if** `API_KEY` is configured
+— auth is an explicit opt-in, not something that silently differs between environments.
+
+Error responses are always `{ "error": { "message": "...", "code": "..." } }`, e.g.
+`CLIENT_NOT_FOUND` (404), `VALIDATION_ERROR` (400), `IDEMPOTENCY_KEY_CONFLICT` (409),
+`INVOICE_STATUS_CONFLICT` (409), `RATE_LIMITED` (429).
+
+## Configuration
+
+Copy `.env.example` to `.env` and adjust. Every variable is validated at startup with zod
+(`src/config/env.ts`) — the process refuses to start rather than run with a bad config.
+
+| Variable                                                                                 | Required                      | Default                                      | Notes                                                                             |
+| ---------------------------------------------------------------------------------------- | ----------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------- |
+| `NODE_ENV`                                                                               | no                            | `development`                                | `development` \| `test` \| `production`                                           |
+| `PORT`                                                                                   | no                            | `3000`                                       |                                                                                   |
+| `DATABASE_URL`                                                                           | **yes**                       | —                                            |                                                                                   |
+| `DATABASE_POOL_MAX`                                                                      | no                            | `10`                                         |                                                                                   |
+| `REDIS_URL`                                                                              | **yes**                       | —                                            | Shared by BullMQ and the rate limiter                                             |
+| `LOG_LEVEL`                                                                              | no                            | `info`                                       | pino level; independent of `NODE_ENV` on purpose                                  |
+| `LOG_PRETTY`                                                                             | no                            | `false`                                      | pino-pretty locally                                                               |
+| `API_KEY`                                                                                | no                            | —                                            | If set, `X-API-Key` is required on `/api/invoices*`                               |
+| `DOCS_ENABLED`                                                                           | no                            | `true` outside production, `false` in it     | Swagger UI + `/docs/openapi.json`                                                 |
+| `MAIL_DRIVER`                                                                            | **yes**                       | —                                            | `mailgun` \| `console` — no default, no silent fallback                           |
+| `MAILGUN_API_KEY` / `MAILGUN_DOMAIN`                                                     | only if `MAIL_DRIVER=mailgun` | —                                            |                                                                                   |
+| `MAILGUN_BASE_URL`                                                                       | no                            | `https://api.mailgun.net`                    | EU accounts: `https://api.eu.mailgun.net`                                         |
+| `MAIL_OUTBOX_DIR`                                                                        | only if `MAIL_DRIVER=console` | `./tmp/outbox`                               |                                                                                   |
+| `MAIL_FROM_NAME` / `MAIL_FROM_EMAIL`                                                     | **yes**                       | —                                            |                                                                                   |
+| `SENDER_BRAND` / `SENDER_NAME` / `SENDER_ADDRESS_LINE1` / `SENDER_CITY` / `SENDER_EMAIL` | **yes**                       | —                                            | Printed on every invoice                                                          |
+| `SENDER_ADDRESS_LINE2` / `SENDER_POSTAL_CODE` / `SENDER_COUNTRY` / `SENDER_PHONE`        | no                            | —                                            |                                                                                   |
+| `INVOICE_CURRENCY_DEFAULT`                                                               | no                            | `USD`                                        | `USD` \| `EUR` \| `GBP`                                                           |
+| `INVOICE_DUE_DAYS`                                                                       | no                            | `14`                                         |                                                                                   |
+| `PDF_TIMEOUT_MS` / `PDF_MAX_BYTES`                                                       | no                            | `20000` / `5242880`                          | Oversized PDF is a permanent failure, not retried                                 |
+| `PUPPETEER_EXECUTABLE_PATH`                                                              | no (yes outside Docker)       | —                                            | `/usr/bin/chromium` in the Docker image                                           |
+| `QUEUE_PDF_CONCURRENCY` / `QUEUE_EMAIL_CONCURRENCY`                                      | no                            | `2` / `5`                                    |                                                                                   |
+| `QUEUE_JOB_ATTEMPTS` / `QUEUE_BACKOFF_DELAY_MS`                                          | no                            | `3` / `3000`                                 | Exponential backoff                                                               |
+| `QUEUE_STUCK_SWEEP_INTERVAL_MS` / `QUEUE_STUCK_TIMEOUT_MS`                               | no                            | `60000` / `120000`                           | Sweeper cadence / staleness threshold                                             |
+| `EMAIL_RATE_LIMIT_MAX` / `EMAIL_RATE_LIMIT_DURATION_MS`                                  | no                            | `50` / `60000`                               | Throttles the email worker against the provider's quota                           |
+| `RATE_LIMIT_WINDOW_MS` / `RATE_LIMIT_MAX`                                                | no                            | `60000` / `30`                               | `POST /api/invoices`, Redis-backed, fails open with a `warn` log if Redis is down |
+| `SHUTDOWN_TIMEOUT_MS`                                                                    | no                            | `15000`                                      | Force-exit timeout for graceful shutdown                                          |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB`                                    | no                            | `postgres` / `postgres` / `invoice_dispatch` | Used by `docker-compose.yml` to init the Postgres container                       |
+
+## Local development without Docker
+
+Needs Node 22, pnpm (`corepack enable`), a local Postgres with the `citext` extension
+available, a local Redis, and a Chrome/Chromium binary (set `PUPPETEER_EXECUTABLE_PATH`).
+
+```bash
+pnpm install
+pnpm db:migrate
+pnpm db:seed
+pnpm dev          # API, with reload
+pnpm dev:worker   # worker, with reload — run in a second terminal
+```
+
+Useful scripts: `pnpm db:generate` (Drizzle migration from the schema), `pnpm db:export-sql`
+(regenerates `db/schema.sql`), `pnpm docs:export` (regenerates `docs/openapi.json`),
+`pnpm typecheck`, `pnpm lint`, `pnpm format`.
+
+## Testing
+
+```bash
+pnpm test              # everything
+pnpm test:unit         # no DB, no network — safe to run anywhere
+pnpm test:integration  # needs a real Postgres + Redis (see tests/setupEnv.ts for defaults)
+pnpm test:coverage
+```
+
+Unit tests mock or inject every external dependency (repositories are called through a narrow
+`typeof`-derived interface per service, never imported directly by the service itself — see
+[SOLID D](#engineering-principles)) and run with zero network access; this was
+verified during development by stopping Postgres entirely and confirming the unit suite still
+passes. Integration tests run against a real database and Redis and include the key scenario: the same email job executed twice
+_concurrently_ must call the mail provider exactly once (`tests/integration/pipeline.duplicate.test.ts`).
+
+## Design decisions
+
+Summary of the key decisions:
+
+- **ADR-1 — layered structure.** `routes → controllers → services → repositories`, each layer
+  only aware of the one below it; services receive their dependencies as an explicit `deps`
+  parameter rather than importing singletons, so they're unit-testable without a database.
+- **ADR-2 — one status-transition function, one conditional SQL statement.** Every status
+  change goes through `src/services/invoiceStatus.service.ts`, built on `UPDATE ... WHERE id =
+:id AND status = ANY(:from) RETURNING *`. No read-then-write at the application level, so
+  two workers racing to claim the same invoice can't both "win" — see the duplicate-job note
+  below for why this took a second pass to get fully right.
+- **ADR-3 — Drizzle schema is the source of truth; `db/schema.sql` is a generated artifact,**
+  regenerated with `pnpm db:export-sql` and committed for anyone who'd rather read plain
+  SQL.
+- **ADR-4 — the PDF lives in Postgres (`bytea`), not on local disk.** Any worker replica can
+  serve `GET /:id/pdf`; only `invoiceId` ever needs to move between processes.
+- **ADR-5 — one Puppeteer/Chromium process per worker,** launched once from an explicit
+  `bootstrap()` (never as a side effect of importing a module) and reused across every render.
+- **ADR-6 — `MAIL_DRIVER` is a required, explicit choice, not a fallback.** `console` is a
+  first-class dev/test driver behind the same `Mailer` interface as the real Mailgun one, not
+  a degraded mode entered when credentials are missing.
+- **ADR-7 — money is integer minor units, always,** computed server-side
+  (`quantity * unitAmountMinor`) regardless of what a client sends; display formatting
+  (`Intl.NumberFormat`) is a separate, pure concern from the arithmetic.
+- **ADR-8 — the billing snapshot is frozen at intake time.** A PDF rendered on retry, possibly
+  days later, shows the client/company/sender data as it was when the invoice was issued, not
+  whatever the live records say now.
+- **ADR-9 — idempotency and correctness live in Postgres; Redis only makes the happy path
+  faster.** BullMQ's own jobId deduplication is real, but it's an optimization: if Redis
+  evicts a completed job's record (or `removeOnComplete` frees the id, which this project uses
+  deliberately — see below), a second pass at the same invoice must still be safe, because the
+  database-level guard is what actually prevents a duplicate.
+
+**A note on the duplicate-email test, because it's worth being honest about:** getting this
+right took two attempts. The first design let a status be listed as its own valid `from` state
+(needed so a legitimate sequential BullMQ retry can re-enter `EMAIL_SENDING` after a previous
+attempt failed partway through) — but that same rule also let two genuinely _concurrent_ calls
+both match the same `UPDATE ... WHERE status = ANY(from)` and both "win", since neither call
+cares who set the current status. `tests/integration/pipeline.duplicate.test.ts` caught this
+intermittently. The fix (`updateInvoiceStatus`'s `staleBefore` option) makes the self-transition
+branch of that `WHERE` clause additionally require `updated_at < staleBefore`: a row updated a
+moment ago (by the other live concurrent caller) fails that check, while a row that's genuinely
+been sitting stuck long enough passes it. Re-run 20+ times after the fix with zero failures.
+
+## Engineering principles
+
+**SOLID.** Single Responsibility: one file per concern (a repository per table, one service
+per pipeline stage). Open/Closed: a new mail provider is a new file implementing `Mailer`, not
+a change to the workers that call it. Liskov: `console` and `mailgun` drivers are fully
+interchangeable behind that interface, and `claim()`/`transition()` are only ever called with
+consistent status-machine invariants. Interface Segregation: each service declares its own
+narrow `typeof`-derived slice of a repository's functions rather than depending on the whole
+module. **Dependency Inversion: no service imports `env` or the database/Redis singletons
+directly** — everything external arrives via a `deps` parameter; only controllers and
+`src/worker.ts` (the composition roots) wire concrete implementations in.
+
+**12-factor.** Config is entirely environment variables, validated once at startup
+(`src/config/env.ts`) — no config files, no environment-name branching for anything except log
+pretty-printing. Dev/prod parity: the same Docker image runs both, `docker-compose.prod.yml`
+only changes environment values and published ports, not code paths. Logs are structured JSON
+to stdout (pino) — the process never writes to a log file. Admin/one-off tasks
+(`db:migrate`, `db:seed`, `db:export-sql`, `docs:export`) are scripts run against the same
+codebase and config, not separate tooling.
+
+**Scaling.** `api` and `worker` scale independently (stateless, horizontally). PDF rendering
+is the current bottleneck (`QUEUE_PDF_CONCURRENCY`, one Chromium per worker process) — the
+first thing to split out if load grew, as its own service with its own image (dropping the
+~500 MB Chromium dependency from the API/email path entirely). The mail provider's quota is
+already guarded by a BullMQ rate limiter on the email queue (`EMAIL_RATE_LIMIT_MAX`/
+`_DURATION_MS`), which throttles job pickup without touching `QUEUE_JOB_ATTEMPTS`.
+
+## Known limitations / explicitly out of scope
+
+No client/company CRUD (seeded/managed directly in the database);
+no authentication beyond an optional static API key; no multi-tenancy; no webhook-based
+delivery-status updates from Mailgun (delivery is considered done once the provider accepts
+the message); no UI. The Docker image is heavier than ideal (~500 MB, `bookworm-slim` +
+Chromium) — a deliberate trade-off for reliability over image size, and the first candidate
+for the scaling split described above.
