@@ -88,5 +88,7 @@ export async function stopWorkers(handles: WorkerHandles): Promise<void> {
   handles.sweeper.stop();
   await handles.pdfWorker.close();
   await handles.emailWorker.close();
+  await pdfQueue.close();
+  await emailQueue.close();
   await handles.browser.close();
 }
