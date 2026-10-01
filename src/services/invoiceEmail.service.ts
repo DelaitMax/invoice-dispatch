@@ -9,6 +9,7 @@ import type { Logger } from "@/utils/logger";
 import { formatMinor } from "@/utils/money";
 import { isPermanentMailError } from "@/mail/errors";
 import type { Mailer } from "@/mail/mailer";
+import { escapeHtml } from "@/utils/escapeHtml";
 
 export interface InvoicesRepository {
   readonly findById: typeof findInvoiceById;
@@ -54,7 +55,7 @@ function buildEmailBody(
     .filter((line) => line.length > 0)
     .join("\n");
 
-  const html = `<p>Hi ${recipientFirstName},</p>
+  const html = `<p>Hi ${escapeHtml(recipientFirstName)},</p>
 <p>Please find attached invoice <strong>${invoice.invoiceNumber}</strong> for <strong>${amount}</strong>.</p>
 ${dueLine ? `<p>${dueLine}</p>` : ""}
 <p>Thank you for your business,<br />${sender.name}</p>`;

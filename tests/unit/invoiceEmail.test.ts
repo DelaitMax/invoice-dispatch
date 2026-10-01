@@ -115,4 +115,18 @@ describe("sendInvoiceEmail", () => {
       expect.objectContaining({ lastError: expect.stringContaining("timeout") }),
     );
   });
+
+  it("escapes HTML-significant characters in the client's first name before building the email HTML (client data, not markup)", async () => {
+    const maliciousInvoice = {
+      ...INVOICE,
+      billingSnapshot: { client: { firstName: "<script>alert(1)</script>", lastName: "Lovelace" } },
+    };
+    const deps = buildDeps({ invoices: { findById: vi.fn(async () => maliciousInvoice as never) } });
+
+    await sendInvoiceEmail(INVOICE_ID, false, deps);
+
+    const sentMail = vi.mocked(deps.mailer.send).mock.calls[0]?.[0];
+    expect(sentMail?.html).not.toContain("<script>");
+    expect(sentMail?.html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+  });
 });
