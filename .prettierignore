@@ -5,3 +5,4 @@ pnpm-lock.yaml
 src/db/migrations
 docs/openapi.json
 db/schema.sql
+.env.example
