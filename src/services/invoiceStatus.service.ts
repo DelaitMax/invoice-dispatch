@@ -14,28 +14,19 @@ export interface TransitionDeps {
   readonly logger: Logger;
 }
 
-/** What invoicePdf.service.ts / invoiceEmail.service.ts depend on — just this one function,
- * expressed via `typeof` so it can never drift from the real implementation below. */
 export interface StatusService {
+  readonly claim: typeof claim;
   readonly transition: typeof transition;
 }
 
-/**
- * The only function in the codebase that changes invoices.status (ADR-2). Underneath it's one
- * conditional `UPDATE ... WHERE id = :id AND status = ANY(:from) RETURNING *` — no
- * read-modify-write at the application level, so two workers racing to move the same invoice
- * can never both "win". Losing that race isn't a bug: it means someone else already made the
- * transition, so this throws a 409 instead of silently overwriting it.
- *
- */
-export async function transition(
+export async function claim(
   db: Database,
   deps: TransitionDeps,
   invoiceId: string,
   from: readonly InvoiceStatus[],
   to: InvoiceStatus,
   patch: InvoiceStatusPatch = {},
-): Promise<InvoiceRow> {
+): Promise<InvoiceRow | null> {
   return db.transaction(async (tx) => {
     const updated = await updateInvoiceStatus(tx, invoiceId, from, to, patch);
 
@@ -47,10 +38,7 @@ export async function transition(
         actual: current?.status ?? "unknown (invoice not found)",
         target: to,
       });
-      throw AppError.conflict(
-        `Invoice ${invoiceId} is not in an expected status for this transition (expected one of: ${from.join(", ")}, target: ${to})`,
-        "INVOICE_STATUS_CONFLICT",
-      );
+      return null;
     }
 
     await insertInvoiceEvent(tx, {
@@ -64,4 +52,24 @@ export async function transition(
 
     return updated;
   });
+}
+
+export async function transition(
+  db: Database,
+  deps: TransitionDeps,
+  invoiceId: string,
+  from: readonly InvoiceStatus[],
+  to: InvoiceStatus,
+  patch: InvoiceStatusPatch = {},
+): Promise<InvoiceRow> {
+  const updated = await claim(db, deps, invoiceId, from, to, patch);
+
+  if (!updated) {
+    throw AppError.conflict(
+      `Invoice ${invoiceId} is not in an expected status for this transition (expected one of: ${from.join(", ")}, target: ${to})`,
+      "INVOICE_STATUS_CONFLICT",
+    );
+  }
+
+  return updated;
 }

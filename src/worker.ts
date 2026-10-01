@@ -6,7 +6,7 @@ import { senderProfile } from "@/config/sender";
 import { findInvoiceDocument, upsertInvoiceDocument } from "@/repositories/invoiceDocuments.repository";
 import { findInvoiceById, findStuckInvoices } from "@/repositories/invoices.repository";
 import { listInvoiceItems } from "@/repositories/invoiceItems.repository";
-import { transition } from "@/services/invoiceStatus.service";
+import { transition, claim } from "@/services/invoiceStatus.service";
 import { logger } from "@/utils/logger";
 import { env } from "@/config/env";
 import { startWorkers, stopWorkers, type WorkerHandles } from "@/queue/bootstrap";
@@ -17,7 +17,7 @@ async function main(): Promise<void> {
     invoices: { findById: findInvoiceById, findStuck: findStuckInvoices },
     items: { list: listInvoiceItems },
     documents: { upsert: upsertInvoiceDocument, findByInvoiceId: findInvoiceDocument },
-    status: { transition },
+    status: { claim, transition },
     mailer: createMailer(env),
     sender: senderProfile,
     logger,

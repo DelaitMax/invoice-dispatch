@@ -67,8 +67,17 @@ export async function sendInvoiceEmail(invoiceId: string, isFinalAttempt: boolea
 
   // PDF_READY is the normal source; EMAIL_SENDING is a retry or sweeper re-pickup landing on
   // an invoice a previous attempt already moved out of PDF_READY (same reasoning as the PDF
-  // worker's self-transition — see invoicePdf.service.ts).
-  await deps.status.transition(deps.db, deps, invoiceId, ["PDF_READY", "EMAIL_SENDING"], "EMAIL_SENDING");
+  // worker's self-transition — see invoicePdf.service.ts). A lost claim here is exactly the
+  // "same email job ran twice concurrently" case: the other attempt owns it,
+  // so this returns without ever calling the mailer — no double send.
+  const claimed = await deps.status.claim(deps.db, deps, invoiceId, ["PDF_READY", "EMAIL_SENDING"], "EMAIL_SENDING");
+
+  if (!claimed) {
+    deps.logger.warn("Skipping email send: could not claim the invoice (already claimed or moved on)", {
+      invoiceId,
+    });
+    return;
+  }
 
   const document = await deps.documents.findByInvoiceId(deps.db, invoiceId);
 

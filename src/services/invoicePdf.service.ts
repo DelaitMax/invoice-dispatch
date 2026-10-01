@@ -70,8 +70,17 @@ export async function renderAndStoreInvoicePdf(invoiceId: string, deps: PdfDeps)
 
   // PDF_RENDERING is a valid source for itself: a BullMQ retry or a sweeper re-pickup runs
   // this function again on an invoice a previous attempt already moved out of PENDING before
-  // failing partway through.
-  await deps.status.transition(deps.db, deps, invoiceId, ["PENDING", "PDF_RENDERING"], "PDF_RENDERING");
+  // failing partway through. A lost claim here means another attempt (or the
+  // email worker moving it past PDF_READY already) genuinely owns this invoice right now —
+  // not an error, just nothing left for this call to do.
+  const claimed = await deps.status.claim(deps.db, deps, invoiceId, ["PENDING", "PDF_RENDERING"], "PDF_RENDERING");
+
+  if (!claimed) {
+    deps.logger.warn("Skipping PDF render: could not claim the invoice (already claimed or moved on)", {
+      invoiceId,
+    });
+    return;
+  }
 
   const itemRows = await deps.items.list(deps.db, invoiceId);
   const html = renderInvoiceHtml({
