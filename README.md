@@ -13,6 +13,7 @@ design decisions.
 - [API reference](#api-reference)
 - [Configuration](#configuration)
 - [Local development without Docker](#local-development-without-docker)
+- [Frontend](#frontend)
 - [Testing](#testing)
 - [Design decisions](#design-decisions)
 - [Engineering principles](#engineering-principles)
@@ -43,10 +44,15 @@ company, to exercise that branch of the PDF/email templates. The others:
 `john.doe@acme.example`, `jane.smith@acme.example` (Acme Inc.), `hank.scorpio@globex.example`
 (Globex Corporation), `peter.gibbons@initech.example` (Initech LLC).
 
-Create an invoice:
+Register a user and create an invoice (the session cookie curl saves to `cookies.txt` on
+register carries through the rest of the walkthrough):
 
 ```bash
-curl -s -X POST http://localhost:3000/api/invoices \
+curl -s -c cookies.txt -X POST http://localhost:3000/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{ "email": "operator@example.com", "password": "correct-horse-battery" }'
+
+curl -s -b cookies.txt -X POST http://localhost:3000/api/invoices \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: demo-key-1" \
   -d '{
@@ -67,9 +73,12 @@ the PDF attachment, or just tail the worker's logs.
 Check on it:
 
 ```bash
-curl -s http://localhost:3000/api/invoices/<invoiceId> | jq
-curl -s http://localhost:3000/api/invoices/<invoiceId>/pdf -o invoice.pdf   # once status is PDF_READY or later
+curl -s -b cookies.txt http://localhost:3000/api/invoices/<invoiceId> | jq
+curl -s -b cookies.txt http://localhost:3000/api/invoices/<invoiceId>/pdf -o invoice.pdf   # once status is PDF_READY or later
 ```
+
+Or skip the `curl`/`cookies.txt` dance entirely and drive the same flow from a browser — see
+[Frontend](#frontend).
 
 Swagger UI is at `http://localhost:3000/docs` in dev (off by default in production —
 see [Configuration](#configuration)).
@@ -140,12 +149,18 @@ Full OpenAPI document at `/docs/openapi.json` (or browse `/docs` in dev). Summar
 | `POST` | `/api/invoices`           | `202` (or `200` on an idempotent replay). Body: `{ email, items: [{ description, quantity?, unitAmountMinor }], currency?, notes? }`. `.strict()` — sending `totalMinor` or an item's `amountMinor` is a `400`, not a silently ignored field, because those are server-computed. Optional `Idempotency-Key` header. |
 | `GET`  | `/api/invoices/:id`       | Status, computed totals, line items, and the client/company data as it was billed (from the frozen snapshot — see ADR-8), not a live lookup.                                                                                                                                                                        |
 | `GET`  | `/api/invoices/:id/pdf`   | `200` + the PDF once it exists; `409 PDF_NOT_READY` before that.                                                                                                                                                                                                                                                    |
-| `POST` | `/api/invoices/:id/retry` | Only from `FAILED`; otherwise `409 INVOICE_NOT_RETRYABLE`.                                                                                                                                                                                                                                                          |
+| `POST` | `/api/invoices/:id/retry` | Only from `FAILED`; otherwise `409 INVOICE_NOT_RETRYABLE`. `role: admin` only — `403 ADMIN_REQUIRED` otherwise.                                                                                                                                                                                                     |
 | `GET`  | `/health`                 | Liveness — always `200`, never touches a dependency.                                                                                                                                                                                                                                                                |
 | `GET`  | `/health/ready`           | Readiness — Postgres `SELECT 1` + Redis `PING`; `503` with a per-component breakdown if either is down.                                                                                                                                                                                                             |
+| `POST` | `/auth/register`          | Body: `{ email, password }`. Always creates `role: "user"` — no self-serve admin. Sets the session cookie.                                                                                                                                                                                                          |
+| `POST` | `/auth/login`             | Body: `{ email, password }`. `401 INVALID_CREDENTIALS` on a mismatch either way (never reveals which).                                                                                                                                                                                                              |
+| `POST` | `/auth/logout`            | Clears the session cookie. Stateless JWT — this doesn't revoke it server-side.                                                                                                                                                                                                                                      |
+| `GET`  | `/auth/me`                | Current user, from the session cookie.                                                                                                                                                                                                                                                                              |
 
-All `/api/invoices*` routes require an `X-API-Key` header **only if** `API_KEY` is configured
-— auth is an explicit opt-in, not something that silently differs between environments.
+All `/api/invoices*` routes require a valid session cookie (`POST /auth/login` or
+`/auth/register` — see [Frontend](#frontend)), and additionally an `X-API-Key` header **only
+if** `API_KEY` is configured — that piece is still an explicit opt-in, layered on top of the
+session rather than replacing it.
 
 Error responses are always `{ "error": { "message": "...", "code": "..." } }`, e.g.
 `CLIENT_NOT_FOUND` (404), `VALIDATION_ERROR` (400), `IDEMPOTENCY_KEY_CONFLICT` (409),
@@ -156,35 +171,40 @@ Error responses are always `{ "error": { "message": "...", "code": "..." } }`, e
 Copy `.env.example` to `.env` and adjust. Every variable is validated at startup with zod
 (`src/config/env.ts`) — the process refuses to start rather than run with a bad config.
 
-| Variable                                                                                 | Required                      | Default                                      | Notes                                                                             |
-| ---------------------------------------------------------------------------------------- | ----------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------- |
-| `NODE_ENV`                                                                               | no                            | `development`                                | `development` \| `test` \| `production`                                           |
-| `PORT`                                                                                   | no                            | `3000`                                       |                                                                                   |
-| `DATABASE_URL`                                                                           | **yes**                       | —                                            |                                                                                   |
-| `DATABASE_POOL_MAX`                                                                      | no                            | `10`                                         |                                                                                   |
-| `REDIS_URL`                                                                              | **yes**                       | —                                            | Shared by BullMQ and the rate limiter                                             |
-| `LOG_LEVEL`                                                                              | no                            | `info`                                       | pino level; independent of `NODE_ENV` on purpose                                  |
-| `LOG_PRETTY`                                                                             | no                            | `false`                                      | pino-pretty locally                                                               |
-| `API_KEY`                                                                                | no                            | —                                            | If set, `X-API-Key` is required on `/api/invoices*`                               |
-| `DOCS_ENABLED`                                                                           | no                            | `true` outside production, `false` in it     | Swagger UI + `/docs/openapi.json`                                                 |
-| `MAIL_DRIVER`                                                                            | **yes**                       | —                                            | `mailgun` \| `console` — no default, no silent fallback                           |
-| `MAILGUN_API_KEY` / `MAILGUN_DOMAIN`                                                     | only if `MAIL_DRIVER=mailgun` | —                                            |                                                                                   |
-| `MAILGUN_BASE_URL`                                                                       | no                            | `https://api.mailgun.net`                    | EU accounts: `https://api.eu.mailgun.net`                                         |
-| `MAIL_OUTBOX_DIR`                                                                        | only if `MAIL_DRIVER=console` | `./tmp/outbox`                               |                                                                                   |
-| `MAIL_FROM_NAME` / `MAIL_FROM_EMAIL`                                                     | **yes**                       | —                                            |                                                                                   |
-| `SENDER_BRAND` / `SENDER_NAME` / `SENDER_ADDRESS_LINE1` / `SENDER_CITY` / `SENDER_EMAIL` | **yes**                       | —                                            | Printed on every invoice                                                          |
-| `SENDER_ADDRESS_LINE2` / `SENDER_POSTAL_CODE` / `SENDER_COUNTRY` / `SENDER_PHONE`        | no                            | —                                            |                                                                                   |
-| `INVOICE_CURRENCY_DEFAULT`                                                               | no                            | `USD`                                        | `USD` \| `EUR` \| `GBP`                                                           |
-| `INVOICE_DUE_DAYS`                                                                       | no                            | `14`                                         |                                                                                   |
-| `PDF_TIMEOUT_MS` / `PDF_MAX_BYTES`                                                       | no                            | `20000` / `5242880`                          | Oversized PDF is a permanent failure, not retried                                 |
-| `PUPPETEER_EXECUTABLE_PATH`                                                              | no (yes outside Docker)       | —                                            | `/usr/bin/chromium` in the Docker image                                           |
-| `QUEUE_PDF_CONCURRENCY` / `QUEUE_EMAIL_CONCURRENCY`                                      | no                            | `2` / `5`                                    |                                                                                   |
-| `QUEUE_JOB_ATTEMPTS` / `QUEUE_BACKOFF_DELAY_MS`                                          | no                            | `3` / `3000`                                 | Exponential backoff                                                               |
-| `QUEUE_STUCK_SWEEP_INTERVAL_MS` / `QUEUE_STUCK_TIMEOUT_MS`                               | no                            | `60000` / `120000`                           | Sweeper cadence / staleness threshold                                             |
-| `EMAIL_RATE_LIMIT_MAX` / `EMAIL_RATE_LIMIT_DURATION_MS`                                  | no                            | `50` / `60000`                               | Throttles the email worker against the provider's quota                           |
-| `RATE_LIMIT_WINDOW_MS` / `RATE_LIMIT_MAX`                                                | no                            | `60000` / `30`                               | `POST /api/invoices`, Redis-backed, fails open with a `warn` log if Redis is down |
-| `SHUTDOWN_TIMEOUT_MS`                                                                    | no                            | `15000`                                      | Force-exit timeout for graceful shutdown                                          |
-| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB`                                    | no                            | `postgres` / `postgres` / `invoice_dispatch` | Used by `docker-compose.yml` to init the Postgres container                       |
+| Variable                                                                                 | Required                      | Default                                      | Notes                                                                                                      |
+| ---------------------------------------------------------------------------------------- | ----------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `NODE_ENV`                                                                               | no                            | `development`                                | `development` \| `test` \| `production`                                                                    |
+| `PORT`                                                                                   | no                            | `3000`                                       |                                                                                                            |
+| `DATABASE_URL`                                                                           | **yes**                       | —                                            |                                                                                                            |
+| `DATABASE_POOL_MAX`                                                                      | no                            | `10`                                         |                                                                                                            |
+| `REDIS_URL`                                                                              | **yes**                       | —                                            | Shared by BullMQ and the rate limiter                                                                      |
+| `LOG_LEVEL`                                                                              | no                            | `info`                                       | pino level; independent of `NODE_ENV` on purpose                                                           |
+| `LOG_PRETTY`                                                                             | no                            | `false`                                      | pino-pretty locally                                                                                        |
+| `API_KEY`                                                                                | no                            | —                                            | Optional machine-to-machine secret, layered on top of the session cookie below (see [Frontend](#frontend)) |
+| `JWT_SECRET`                                                                             | **yes**                       | —                                            | Signs the browser session cookie; >=32 chars, no default (unlike `API_KEY`, this guards real accounts)     |
+| `JWT_COOKIE_NAME`                                                                        | no                            | `auth_token`                                 |                                                                                                            |
+| `JWT_EXPIRES_IN_SECONDS`                                                                 | no                            | `604800`                                     | 7 days                                                                                                     |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD`                                                         | no, but together-or-neither   | —                                            | One-time admin bootstrap, read by `pnpm db:seed`                                                           |
+| `AUTH_RATE_LIMIT_MAX`                                                                    | no                            | `10`                                         | `POST /auth/register` and `/auth/login`, tighter than `RATE_LIMIT_MAX` on purpose                          |
+| `DOCS_ENABLED`                                                                           | no                            | `true` outside production, `false` in it     | Swagger UI + `/docs/openapi.json`                                                                          |
+| `MAIL_DRIVER`                                                                            | **yes**                       | —                                            | `mailgun` \| `console` — no default, no silent fallback                                                    |
+| `MAILGUN_API_KEY` / `MAILGUN_DOMAIN`                                                     | only if `MAIL_DRIVER=mailgun` | —                                            |                                                                                                            |
+| `MAILGUN_BASE_URL`                                                                       | no                            | `https://api.mailgun.net`                    | EU accounts: `https://api.eu.mailgun.net`                                                                  |
+| `MAIL_OUTBOX_DIR`                                                                        | only if `MAIL_DRIVER=console` | `./tmp/outbox`                               |                                                                                                            |
+| `MAIL_FROM_NAME` / `MAIL_FROM_EMAIL`                                                     | **yes**                       | —                                            |                                                                                                            |
+| `SENDER_BRAND` / `SENDER_NAME` / `SENDER_ADDRESS_LINE1` / `SENDER_CITY` / `SENDER_EMAIL` | **yes**                       | —                                            | Printed on every invoice                                                                                   |
+| `SENDER_ADDRESS_LINE2` / `SENDER_POSTAL_CODE` / `SENDER_COUNTRY` / `SENDER_PHONE`        | no                            | —                                            |                                                                                                            |
+| `INVOICE_CURRENCY_DEFAULT`                                                               | no                            | `USD`                                        | `USD` \| `EUR` \| `GBP`                                                                                    |
+| `INVOICE_DUE_DAYS`                                                                       | no                            | `14`                                         |                                                                                                            |
+| `PDF_TIMEOUT_MS` / `PDF_MAX_BYTES`                                                       | no                            | `20000` / `5242880`                          | Oversized PDF is a permanent failure, not retried                                                          |
+| `PUPPETEER_EXECUTABLE_PATH`                                                              | no (yes outside Docker)       | —                                            | `/usr/bin/chromium` in the Docker image                                                                    |
+| `QUEUE_PDF_CONCURRENCY` / `QUEUE_EMAIL_CONCURRENCY`                                      | no                            | `2` / `5`                                    |                                                                                                            |
+| `QUEUE_JOB_ATTEMPTS` / `QUEUE_BACKOFF_DELAY_MS`                                          | no                            | `3` / `3000`                                 | Exponential backoff                                                                                        |
+| `QUEUE_STUCK_SWEEP_INTERVAL_MS` / `QUEUE_STUCK_TIMEOUT_MS`                               | no                            | `60000` / `120000`                           | Sweeper cadence / staleness threshold                                                                      |
+| `EMAIL_RATE_LIMIT_MAX` / `EMAIL_RATE_LIMIT_DURATION_MS`                                  | no                            | `50` / `60000`                               | Throttles the email worker against the provider's quota                                                    |
+| `RATE_LIMIT_WINDOW_MS` / `RATE_LIMIT_MAX`                                                | no                            | `60000` / `30`                               | `POST /api/invoices`, Redis-backed, fails open with a `warn` log if Redis is down                          |
+| `SHUTDOWN_TIMEOUT_MS`                                                                    | no                            | `15000`                                      | Force-exit timeout for graceful shutdown                                                                   |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB`                                    | no                            | `postgres` / `postgres` / `invoice_dispatch` | Used by `docker-compose.yml` to init the Postgres container                                                |
 
 ## Local development without Docker
 
@@ -202,6 +222,39 @@ pnpm dev:worker   # worker, with reload — run in a second terminal
 Useful scripts: `pnpm db:generate` (Drizzle migration from the schema), `pnpm db:export-sql`
 (regenerates `db/schema.sql`), `pnpm docs:export` (regenerates `docs/openapi.json`),
 `pnpm typecheck`, `pnpm lint`, `pnpm format`.
+
+## Frontend
+
+A small operator console lives in [`frontend/`](./frontend). It's an independent package
+(own `package.json`, own lockfile), not a pnpm workspace member and not a `backend/` restructure of this repo: React
+19 + Redux Toolkit/RTK Query + Tailwind v4, talking to this API over the same origin.
+
+Log in or register (self-registration always creates `role: "user"`; the first `admin` account
+comes from the `ADMIN_EMAIL`/`ADMIN_PASSWORD` bootstrap above), create an invoice, and it's
+tracked in a per-browser `localStorage` journal — there's deliberately no `GET /api/invoices`
+list endpoint, so the journal plus an "add by ID" lookup is how the console builds its own view
+of "invoices I care about" instead. Each tracked row polls `GET /api/invoices/:id` every 2s
+until it reaches `SENT`/`FAILED`, offers a PDF download once one exists, and shows a **Retry**
+button only for `role: admin` (the backend's `requireAdmin` on `POST /:id/retry` is the actual
+enforcement — hiding the button is just not offering an action that would 403).
+
+```bash
+cd frontend
+cp .env.example .env        # only used by the dev proxy below, not the production build
+npm install
+npm run gen:api              # regenerates src/types/api.generated.ts from ../docs/openapi.json
+npm run dev                  # http://localhost:5173, proxying /api,/auth,/health,/docs to :3000
+```
+
+`npm run build` produces `frontend/dist` — static files with no server of their own. There is
+**no frontend Docker container**: production serves `dist/` from a host-level nginx (outside
+`docker compose`) that also proxies `/api`, `/auth`, `/health`, `/docs` to the `api` container
+on `127.0.0.1:3000`, using [`deploy/nginx.conf.example`](./deploy/nginx.conf.example) as a
+starting point. Same-origin here isn't just tidy — the session cookie is `httpOnly` +
+`sameSite: "lax"`, which doesn't reliably survive a cross-origin request, so there's no `cors`
+package on the backend and no `VITE_BACKEND_URL` baked into the production build.
+
+`npm run typecheck`, `npm run lint`, `npm test` — same expectations as the backend.
 
 ## Testing
 
@@ -294,8 +347,12 @@ already guarded by a BullMQ rate limiter on the email queue (`EMAIL_RATE_LIMIT_M
 ## Known limitations / explicitly out of scope
 
 No client/company CRUD (seeded/managed directly in the database);
-no authentication beyond an optional static API key; no multi-tenancy; no webhook-based
-delivery-status updates from Mailgun (delivery is considered done once the provider accepts
-the message); no UI. The Docker image is heavier than ideal (~500 MB, `bookworm-slim` +
-Chromium) — a deliberate trade-off for reliability over image size, and the first candidate
-for the scaling split described above.
+no multi-tenancy (the `admin`/`user` roles are global, not per-organization);
+no webhook-based delivery-status updates from Mailgun
+(delivery is considered done once the provider accepts the message). The Docker image is
+heavier than ideal (~500 MB, `bookworm-slim` + Chromium) — a deliberate trade-off for
+reliability over image size, and the first candidate for the scaling split described above.
+
+Authentication and a small operator UI are covered above (see [Frontend](#frontend)). Still out of
+scope: password reset, 2FA, OAuth (email and password only), and a CI/CD pipeline — the deploy is
+manual, and automating it is a separate task.
