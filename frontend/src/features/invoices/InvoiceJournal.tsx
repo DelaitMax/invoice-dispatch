@@ -65,16 +65,13 @@ function AddByIdForm({ onAdded }: { onAdded: () => void }) {
 
 function JournalRow({ entry, onRemoved }: { entry: JournalEntry; onRemoved: () => void }) {
   const { data: currentUser } = useGetCurrentUserQuery();
-  // Not an effect on purpose: this is "adjust state when data changes", guarded so it only
-  // ever flips once — react-hooks flags setState-in-useEffect as a cascading-render smell, and
-  // an effect here would be exactly that for no benefit over doing it inline during render.
   const [isTerminal, setIsTerminal] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const { data, error } = useGetInvoiceQuery(entry.invoiceId, { pollingInterval: isTerminal ? 0 : 2000 });
   const [retryInvoice, { isLoading: isRetrying }] = useRetryInvoiceMutation();
 
-  if (data && isTerminalStatus(data.status) && !isTerminal) {
-    setIsTerminal(true);
+  if (data && isTerminalStatus(data.status) !== isTerminal) {
+    setIsTerminal(isTerminalStatus(data.status));
   }
 
   const notFound = getApiErrorCode(error) === "INVOICE_NOT_FOUND";
