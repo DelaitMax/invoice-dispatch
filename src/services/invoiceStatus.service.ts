@@ -9,6 +9,12 @@ export interface TransitionDeps {
   readonly logger: Logger;
 }
 
+/** What invoicePdf.service.ts / invoiceEmail.service.ts depend on — just this one function,
+ * expressed via `typeof` so it can never drift from the real implementation below. */
+export interface StatusService {
+  readonly transition: typeof transition;
+}
+
 /**
  * The only function in the codebase that changes invoices.status (ADR-2). Underneath it's one
  * conditional `UPDATE ... WHERE id = :id AND status = ANY(:from) RETURNING *` — no

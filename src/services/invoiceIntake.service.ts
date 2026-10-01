@@ -227,7 +227,7 @@ export async function createInvoice(input: CreateInvoiceInput, deps: IntakeDeps)
   await deps.requests.markOutcome(deps.db, requestRow.id, "ACCEPTED", invoice.id);
 
   try {
-    await deps.pdfQueue.add("render", { invoiceId: invoice.id }, { jobId: `pdf:${invoice.id}` });
+    await deps.pdfQueue.add("render", { invoiceId: invoice.id }, { jobId: `pdf-${invoice.id}` });
   } catch (err) {
     deps.logger.error("Failed to enqueue PDF render job; the sweeper will pick this invoice up", {
       invoiceId: invoice.id,
