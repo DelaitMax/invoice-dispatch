@@ -1,3 +1,4 @@
+import cookieParser from "cookie-parser";
 import express, { type Express } from "express";
 import helmet from "helmet";
 import { env } from "@/config/env";
@@ -16,6 +17,7 @@ export function createApp(): Express {
   app.use(helmet());
   app.use(requestLoggerMiddleware);
   app.use(express.json({ limit: REQUEST_BODY_LIMIT }));
+  app.use(cookieParser());
 
   registerRoutes(app);
 

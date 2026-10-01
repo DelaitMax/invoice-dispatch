@@ -37,3 +37,17 @@ export const createInvoiceRateLimiter = rateLimit({
     sendCommand,
   }),
 });
+
+export const authRateLimiter = rateLimit({
+  windowMs: env.RATE_LIMIT_WINDOW_MS,
+  limit: env.AUTH_RATE_LIMIT_MAX,
+  standardHeaders: true,
+  legacyHeaders: false,
+  passOnStoreError: true,
+  statusCode: StatusCodes.TOO_MANY_REQUESTS,
+  message: { error: { message: "Too many requests, please try again later", code: "RATE_LIMITED" } },
+  store: new RedisStore({
+    prefix: "rl:auth:",
+    sendCommand,
+  }),
+});
