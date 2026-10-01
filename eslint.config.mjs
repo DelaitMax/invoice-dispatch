@@ -64,10 +64,7 @@ export default tseslint.config(
     },
   },
   {
-    // These two files are the deliberate exceptions: setupEnv.ts bootstraps test env vars,
-    // and env.test.ts exists specifically to exercise loadEnv() against different
-    // process.env configurations.
-    files: ["tests/setupEnv.ts", "tests/unit/env.test.ts"],
+    files: ["tests/setupEnv.ts", "tests/unit/env.test.ts", "tests/integration/docs.test.ts"],
     rules: {
       "no-restricted-properties": "off",
     },

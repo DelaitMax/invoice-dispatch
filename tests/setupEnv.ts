@@ -26,6 +26,7 @@ process.env["INVOICE_DUE_DAYS"] ??= "14";
 
 process.env["PDF_TIMEOUT_MS"] ??= "20000";
 process.env["PDF_MAX_BYTES"] ??= "5242880";
+process.env["PUPPETEER_EXECUTABLE_PATH"] ??= "/usr/bin/chromium";
 
 process.env["QUEUE_PDF_CONCURRENCY"] ??= "2";
 process.env["QUEUE_EMAIL_CONCURRENCY"] ??= "2";
