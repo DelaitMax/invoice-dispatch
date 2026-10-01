@@ -64,8 +64,10 @@ export default tseslint.config(
     },
   },
   {
-    // Test env bootstrap is allowed to set process.env before the app loads config.
-    files: ["tests/setupEnv.ts"],
+    // These two files are the deliberate exceptions: setupEnv.ts bootstraps test env vars,
+    // and env.test.ts exists specifically to exercise loadEnv() against different
+    // process.env configurations.
+    files: ["tests/setupEnv.ts", "tests/unit/env.test.ts"],
     rules: {
       "no-restricted-properties": "off",
     },

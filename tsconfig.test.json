@@ -8,5 +8,6 @@
       "@tests/*": ["tests/*"]
     }
   },
-  "include": ["src", "tests"]
+  "include": ["src", "tests"],
+  "exclude": ["node_modules", "dist"]
 }
