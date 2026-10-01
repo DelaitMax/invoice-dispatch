@@ -86,6 +86,7 @@ function buildDeps(callOrder: string[], overrides: Partial<IntakeDeps> = {}): In
     },
     pdfQueue: { add: vi.fn(async () => ({}) as never) },
     sender: SENDER,
+    invoiceDueDays: 14,
     clock: () => new Date("2026-01-01T00:00:00.000Z"),
     logger: fakeLogger(),
     ...overrides,

@@ -26,6 +26,7 @@ function buildDeps(): IntakeDeps {
       phone: undefined,
       address: { line1: "1 St", line2: undefined, city: "City", postalCode: undefined, country: undefined },
     },
+    invoiceDueDays: 14,
     clock: () => new Date("2026-01-01T00:00:00.000Z"),
     logger: fakeLogger(),
   };

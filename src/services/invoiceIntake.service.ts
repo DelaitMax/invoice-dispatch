@@ -1,5 +1,4 @@
 import type { Queue } from "bullmq";
-import { env } from "@/config/env";
 import type { SenderProfile } from "@/config/sender";
 import type { Database } from "@/db/client";
 import type { ClientWithCompany, findClientByEmailWithCompany } from "@/repositories/clients.repository";
@@ -72,6 +71,7 @@ export interface IntakeDeps {
   };
   readonly pdfQueue: Pick<Queue<PdfJobData>, "add">;
   readonly sender: SenderProfile;
+  readonly invoiceDueDays: number;
   readonly clock: () => Date;
   readonly logger: Logger;
 }
@@ -186,7 +186,7 @@ export async function createInvoice(input: CreateInvoiceInput, deps: IntakeDeps)
 
   const totalMinor = sumMinor(input.items);
   const issuedAt = deps.clock();
-  const dueAt = addDays(issuedAt, env.INVOICE_DUE_DAYS);
+  const dueAt = addDays(issuedAt, deps.invoiceDueDays);
   const billingSnapshot = buildBillingSnapshot(client, deps.sender, input.currency, issuedAt);
 
   const invoice = await deps.db.transaction(async (tx) => {

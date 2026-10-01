@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { StatusCodes } from "http-status-codes";
 import { z } from "zod";
+import { env } from "@/config/env";
 import { senderProfile } from "@/config/sender";
 import { db } from "@/db/client";
 import { pdfQueue } from "@/queue/pdfQueue";
@@ -32,6 +33,7 @@ const intakeDeps: IntakeDeps = {
   requests: { insert: insertInvoiceRequest, markOutcome: updateInvoiceRequestOutcome },
   pdfQueue,
   sender: senderProfile,
+  invoiceDueDays: env.INVOICE_DUE_DAYS,
   clock: () => new Date(),
   logger,
 };
