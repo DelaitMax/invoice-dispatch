@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { apiKeyMiddleware } from "@/middleware/apiKey.middleware";
+import { requireAdmin, requireAuth } from "@/middleware/auth.middleware";
 import { createInvoiceRateLimiter } from "@/middleware/rateLimit.middleware";
 import { asyncHandler } from "@/utils/asyncHandler";
 import {
@@ -11,9 +12,9 @@ import {
 
 export const invoicesRouter = Router();
 
-invoicesRouter.use(apiKeyMiddleware);
+invoicesRouter.use(apiKeyMiddleware, requireAuth);
 
 invoicesRouter.post("/", createInvoiceRateLimiter, asyncHandler(createInvoiceHandler));
 invoicesRouter.get("/:id", asyncHandler(getInvoiceHandler));
 invoicesRouter.get("/:id/pdf", asyncHandler(getInvoicePdfHandler));
-invoicesRouter.post("/:id/retry", asyncHandler(retryInvoiceHandler));
+invoicesRouter.post("/:id/retry", requireAdmin, asyncHandler(retryInvoiceHandler));
