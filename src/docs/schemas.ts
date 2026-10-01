@@ -64,3 +64,9 @@ export const readinessResponseSchema = z.object({
   status: componentStatusSchema,
   components: z.object({ database: componentStatusSchema, redis: componentStatusSchema }),
 });
+
+export const authUserResponseSchema = z.object({
+  id: z.string().uuid(),
+  email: z.string().email(),
+  role: z.enum(["admin", "user"]),
+});

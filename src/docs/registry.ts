@@ -1,8 +1,10 @@
 import { extendZodWithOpenApi, OpenAPIRegistry } from "@asteasolutions/zod-to-openapi";
 import type { ResponseConfig } from "@asteasolutions/zod-to-openapi";
 import { z } from "zod";
+import { loginSchema, registerSchema } from "@/schemas/auth.schema";
 import { createInvoiceBodySchema } from "@/schemas/invoices.schema";
 import {
+  authUserResponseSchema,
   createInvoiceResponseSchema,
   errorResponseSchema,
   invoiceDetailResponseSchema,
@@ -15,14 +17,22 @@ extendZodWithOpenApi(z);
 
 export const registry = new OpenAPIRegistry();
 
-const apiKeyAuth = registry.registerComponent("securitySchemes", "apiKey", {
+registry.registerComponent("securitySchemes", "apiKey", {
   type: "apiKey",
   in: "header",
   name: "X-API-Key",
-  description: "Only enforced when the server has API_KEY configured.",
+  description:
+    "Only enforced when the server has API_KEY configured — layered on top of, not instead of, the session cookie below.",
 });
 
-const AUTH = [{ [apiKeyAuth.name]: [] }];
+const sessionCookieAuth = registry.registerComponent("securitySchemes", "sessionCookie", {
+  type: "apiKey",
+  in: "cookie",
+  name: "auth_token",
+  description: "Set by POST /auth/login or /auth/register. Always required on /api/invoices/*.",
+});
+
+const AUTH = [{ [sessionCookieAuth.name]: [] }];
 
 function json(description: string, schema: z.ZodTypeAny): ResponseConfig {
   return { description, content: { "application/json": { schema } } };
@@ -33,7 +43,8 @@ function errorJson(description: string): ResponseConfig {
 }
 
 const VALIDATION_ERROR = errorJson("Request validation failed (VALIDATION_ERROR)");
-const UNAUTHORIZED = errorJson("Missing or invalid X-API-Key (UNAUTHORIZED)");
+const UNAUTHORIZED = errorJson("Missing/invalid session cookie, or (if API_KEY is configured) X-API-Key");
+const FORBIDDEN = errorJson("Logged in, but not as an admin (ADMIN_REQUIRED)");
 const RATE_LIMITED = errorJson("Too many requests (RATE_LIMITED)");
 
 const invoiceIdParamSchema = z.object({
@@ -132,7 +143,55 @@ registry.registerPath({
     202: json("Retry accepted", retryInvoiceResponseSchema),
     400: VALIDATION_ERROR,
     401: UNAUTHORIZED,
+    403: FORBIDDEN,
     404: errorJson("Invoice not found (INVOICE_NOT_FOUND)"),
     409: errorJson("Invoice is not in a retryable (FAILED) state (INVOICE_NOT_RETRYABLE)"),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/auth/register",
+  tags: ["Auth"],
+  summary: "Create an account (always role: user — see /auth/me) and start a session",
+  request: { body: { content: { "application/json": { schema: registerSchema } } } },
+  responses: {
+    201: json("Account created, session cookie set", authUserResponseSchema),
+    400: errorJson("Validation failed, or the email is already registered (VALIDATION_ERROR, EMAIL_TAKEN)"),
+    429: RATE_LIMITED,
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/auth/login",
+  tags: ["Auth"],
+  summary: "Log in and start a session",
+  request: { body: { content: { "application/json": { schema: loginSchema } } } },
+  responses: {
+    200: json("Session cookie set", authUserResponseSchema),
+    400: VALIDATION_ERROR,
+    401: errorJson("Wrong email or password (INVALID_CREDENTIALS)"),
+    429: RATE_LIMITED,
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/auth/logout",
+  tags: ["Auth"],
+  summary: "Clear the session cookie (stateless JWT — this doesn't revoke it server-side)",
+  responses: { 204: { description: "Session cookie cleared" } },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/auth/me",
+  tags: ["Auth"],
+  summary: "Get the currently logged-in user",
+  security: AUTH,
+  responses: {
+    200: json("Current user", authUserResponseSchema),
+    401: UNAUTHORIZED,
   },
 });
