@@ -10,7 +10,6 @@ services:
       MAIL_DRIVER: mailgun
       MAILGUN_API_KEY: ${MAILGUN_API_KEY:?must be set}
       MAILGUN_DOMAIN: ${MAILGUN_DOMAIN:?must be set}
-      API_KEY: ${API_KEY:?must be set}
       DOCS_ENABLED: "false"
 
   worker:
