@@ -4,15 +4,18 @@ import { createApp } from "@/app";
 import { closeDb } from "@/db/client";
 import { seedTestFixtures, TEST_CLIENT_EMAIL, TEST_CLIENT_FIRST_NAME, TEST_CLIENT_LAST_NAME } from "./fixtures";
 import { truncateInvoiceTables } from "./helpers";
+import { loginAsUser } from "./helpers/auth";
 
 vi.mock("@/queue/pdfQueue", () => ({
   pdfQueue: { add: vi.fn(async () => ({}) as never) },
 }));
 
 const app = createApp();
+let authCookie: string;
 
 beforeAll(async () => {
   await seedTestFixtures();
+  authCookie = await loginAsUser(app);
 });
 
 beforeEach(async () => {
@@ -27,6 +30,7 @@ describe("GET /api/invoices/:id", () => {
   it("returns status, line items, and client/company data from the billing snapshot", async () => {
     const created = await request(app)
       .post("/api/invoices")
+      .set("Cookie", authCookie)
       .send({
         email: TEST_CLIENT_EMAIL,
         notes: "See you soon",
@@ -37,7 +41,7 @@ describe("GET /api/invoices/:id", () => {
       });
     expect(created.status).toBe(202);
 
-    const response = await request(app).get(`/api/invoices/${created.body.invoiceId}`);
+    const response = await request(app).get(`/api/invoices/${created.body.invoiceId}`).set("Cookie", authCookie);
 
     expect(response.status).toBe(200);
     expect(response.body.status).toBe("PENDING");
@@ -56,13 +60,15 @@ describe("GET /api/invoices/:id", () => {
   });
 
   it("returns 404 for an unknown invoice id", async () => {
-    const response = await request(app).get("/api/invoices/00000000-0000-4000-8000-000000000000");
+    const response = await request(app)
+      .get("/api/invoices/00000000-0000-4000-8000-000000000000")
+      .set("Cookie", authCookie);
     expect(response.status).toBe(404);
     expect(response.body.error.code).toBe("INVOICE_NOT_FOUND");
   });
 
   it("returns 400 for a malformed id", async () => {
-    const response = await request(app).get("/api/invoices/not-a-uuid");
+    const response = await request(app).get("/api/invoices/not-a-uuid").set("Cookie", authCookie);
     expect(response.status).toBe(400);
   });
 });

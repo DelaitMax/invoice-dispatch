@@ -39,4 +39,9 @@ process.env["EMAIL_RATE_LIMIT_DURATION_MS"] ??= "60000";
 
 process.env["RATE_LIMIT_WINDOW_MS"] ??= "60000";
 process.env["RATE_LIMIT_MAX"] ??= "1000";
+process.env["AUTH_RATE_LIMIT_MAX"] ??= "1000";
 process.env["SHUTDOWN_TIMEOUT_MS"] ??= "1000";
+
+process.env["JWT_SECRET"] ??= "test-secret-at-least-32-characters-long";
+process.env["JWT_COOKIE_NAME"] ??= "auth_token";
+process.env["JWT_EXPIRES_IN_SECONDS"] ??= "604800";

@@ -5,15 +5,18 @@ import { closeDb, db } from "@/db/client";
 import { upsertInvoiceDocument } from "@/repositories/invoiceDocuments.repository";
 import { seedTestFixtures, TEST_CLIENT_EMAIL } from "./fixtures";
 import { truncateInvoiceTables } from "./helpers";
+import { loginAsUser } from "./helpers/auth";
 
 vi.mock("@/queue/pdfQueue", () => ({
   pdfQueue: { add: vi.fn(async () => ({}) as never) },
 }));
 
 const app = createApp();
+let authCookie: string;
 
 beforeAll(async () => {
   await seedTestFixtures();
+  authCookie = await loginAsUser(app);
 });
 
 beforeEach(async () => {
@@ -28,9 +31,10 @@ describe("GET /api/invoices/:id/pdf", () => {
   it("returns 409 PDF_NOT_READY before the document has been rendered", async () => {
     const created = await request(app)
       .post("/api/invoices")
+      .set("Cookie", authCookie)
       .send({ email: TEST_CLIENT_EMAIL, items: [{ description: "x", quantity: 1, unitAmountMinor: 100 }] });
 
-    const response = await request(app).get(`/api/invoices/${created.body.invoiceId}/pdf`);
+    const response = await request(app).get(`/api/invoices/${created.body.invoiceId}/pdf`).set("Cookie", authCookie);
 
     expect(response.status).toBe(409);
     expect(response.body.error.code).toBe("PDF_NOT_READY");
@@ -39,6 +43,7 @@ describe("GET /api/invoices/:id/pdf", () => {
   it("returns 200 application/pdf with the stored bytes once the document exists", async () => {
     const created = await request(app)
       .post("/api/invoices")
+      .set("Cookie", authCookie)
       .send({ email: TEST_CLIENT_EMAIL, items: [{ description: "x", quantity: 1, unitAmountMinor: 100 }] });
 
     const fakePdf = Buffer.from("%PDF-1.4 fake content for the integration test");
@@ -50,7 +55,7 @@ describe("GET /api/invoices/:id/pdf", () => {
       sha256: "deadbeef",
     });
 
-    const response = await request(app).get(`/api/invoices/${created.body.invoiceId}/pdf`);
+    const response = await request(app).get(`/api/invoices/${created.body.invoiceId}/pdf`).set("Cookie", authCookie);
 
     expect(response.status).toBe(200);
     expect(response.headers["content-type"]).toBe("application/pdf");
@@ -59,7 +64,9 @@ describe("GET /api/invoices/:id/pdf", () => {
   });
 
   it("returns 404 for an unknown invoice id", async () => {
-    const response = await request(app).get("/api/invoices/00000000-0000-4000-8000-000000000000/pdf");
+    const response = await request(app)
+      .get("/api/invoices/00000000-0000-4000-8000-000000000000/pdf")
+      .set("Cookie", authCookie);
     expect(response.status).toBe(404);
     expect(response.body.error.code).toBe("INVOICE_NOT_FOUND");
   });

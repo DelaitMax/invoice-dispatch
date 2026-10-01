@@ -6,6 +6,7 @@ import { db, closeDb } from "@/db/client";
 import { invoiceItems, invoiceRequests, invoices } from "@/db/schema";
 import { seedTestFixtures, TEST_CLIENT_EMAIL } from "./fixtures";
 import { truncateInvoiceTables } from "./helpers";
+import { loginAsUser } from "./helpers/auth";
 
 const pdfQueueAddMock = vi.hoisted(() => vi.fn(async () => ({}) as never));
 
@@ -14,9 +15,11 @@ vi.mock("@/queue/pdfQueue", () => ({
 }));
 
 const app = createApp();
+let authCookie: string;
 
 beforeAll(async () => {
   await seedTestFixtures();
+  authCookie = await loginAsUser(app);
 });
 
 beforeEach(async () => {
@@ -32,6 +35,7 @@ describe("POST /api/invoices", () => {
   it("returns 202 with a server-computed total and creates the invoice, its items, and an accepted audit row", async () => {
     const response = await request(app)
       .post("/api/invoices")
+      .set("Cookie", authCookie)
       .send({
         email: TEST_CLIENT_EMAIL,
         items: [
@@ -71,6 +75,7 @@ describe("POST /api/invoices", () => {
   it("ignores a client-supplied totalMinor and computes it server-side anyway", async () => {
     const response = await request(app)
       .post("/api/invoices")
+      .set("Cookie", authCookie)
       .send({
         email: TEST_CLIENT_EMAIL,
         items: [{ description: "x", quantity: 1, unitAmountMinor: 100 }],
@@ -79,5 +84,14 @@ describe("POST /api/invoices", () => {
 
     expect(response.status).toBe(400);
     expect(response.body.error.code).toBe("VALIDATION_ERROR");
+  });
+
+  it("returns 401 without a session cookie", async () => {
+    const response = await request(app)
+      .post("/api/invoices")
+      .send({ email: TEST_CLIENT_EMAIL, items: [{ description: "x", quantity: 1, unitAmountMinor: 100 }] });
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe("NOT_AUTHENTICATED");
   });
 });

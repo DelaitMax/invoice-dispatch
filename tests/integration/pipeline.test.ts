@@ -15,8 +15,10 @@ import { transition, claim } from "@/services/invoiceStatus.service";
 import { logger } from "@/utils/logger";
 import { seedTestFixtures, TEST_CLIENT_EMAIL } from "./fixtures";
 import { truncateInvoiceTables } from "./helpers";
+import { loginAsUser } from "./helpers/auth";
 
 const app = createApp();
+let authCookie: string;
 
 let handles: WorkerHandles;
 const sentMails: OutgoingMail[] = [];
@@ -29,6 +31,7 @@ const fakeMailer: Mailer = {
 
 beforeAll(async () => {
   await seedTestFixtures();
+  authCookie = await loginAsUser(app);
   handles = await startWorkers({
     db,
     invoices: { findById: findInvoiceById, findStuck: findStuckInvoices },
@@ -83,6 +86,7 @@ describe("Pipeline: intake -> PDF worker -> email worker", () => {
   it("takes a created invoice all the way to SENT with a non-empty PDF attachment", async () => {
     const created = await request(app)
       .post("/api/invoices")
+      .set("Cookie", authCookie)
       .send({
         email: TEST_CLIENT_EMAIL,
         items: [{ description: "End-to-end pipeline test", quantity: 1, unitAmountMinor: 12_345 }],
