@@ -38,7 +38,7 @@ export async function sweepStuckInvoices(deps: SweeperDeps): Promise<number> {
       } else {
         await deps.emailQueue.add("send", { invoiceId: invoice.id }, { jobId: `email-${invoice.id}` });
       }
-      deps.logger.info("Sweeper re-enqueued a stuck invoice", { invoiceId: invoice.id, status: invoice.status });
+      deps.logger.debug("Sweeper re-enqueued a stuck invoice", { invoiceId: invoice.id, status: invoice.status });
     } catch (err) {
       deps.logger.error("Sweeper failed to re-enqueue a stuck invoice", {
         invoiceId: invoice.id,
@@ -46,6 +46,10 @@ export async function sweepStuckInvoices(deps: SweeperDeps): Promise<number> {
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  if (stuckInvoices.length > 0) {
+    deps.logger.warn("Sweeper re-enqueued stuck invoices", { count: stuckInvoices.length });
   }
 
   return stuckInvoices.length;

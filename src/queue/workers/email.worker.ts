@@ -1,4 +1,4 @@
-import { Worker, type Job } from "bullmq";
+import { UnrecoverableError, Worker, type Job } from "bullmq";
 import { env } from "@/config/env";
 import { QUEUE_NAME_EMAIL } from "@/constants";
 import { type EmailDeps, sendInvoiceEmail } from "@/services/invoiceEmail.service";
@@ -20,11 +20,14 @@ export function createEmailWorker(deps: EmailDeps): Worker<EmailJobData> {
   );
 
   worker.on("failed", (job, err) => {
-    deps.logger.error("Email send job failed", {
-      invoiceId: job?.data.invoiceId,
-      attemptsMade: job?.attemptsMade,
-      error: err.message,
-    });
+    const final = !job || isFinalAttempt(job) || err instanceof UnrecoverableError;
+    const meta = { invoiceId: job?.data.invoiceId, attemptsMade: job?.attemptsMade, error: err.message };
+
+    if (final) {
+      deps.logger.error("Email send job failed permanently; invoice marked FAILED", meta);
+    } else {
+      deps.logger.warn("Email send job failed, will retry", meta);
+    }
   });
 
   return worker;

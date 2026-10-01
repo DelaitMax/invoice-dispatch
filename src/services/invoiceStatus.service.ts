@@ -1,6 +1,11 @@
 import type { Database } from "@/db/client";
 import { insertInvoiceEvent } from "@/repositories/invoiceEvents.repository";
-import { type InvoiceRow, type InvoiceStatusPatch, updateInvoiceStatus } from "@/repositories/invoices.repository";
+import {
+  type InvoiceRow,
+  type InvoiceStatusPatch,
+  findInvoiceById,
+  updateInvoiceStatus,
+} from "@/repositories/invoices.repository";
 import type { InvoiceStatus } from "@/types/invoice.types";
 import { AppError } from "@/utils/AppError";
 import type { Logger } from "@/utils/logger";
@@ -35,6 +40,13 @@ export async function transition(
     const updated = await updateInvoiceStatus(tx, invoiceId, from, to, patch);
 
     if (!updated) {
+      const current = await findInvoiceById(tx, invoiceId);
+      deps.logger.warn("Invoice status transition rejected", {
+        invoiceId,
+        expected: from,
+        actual: current?.status ?? "unknown (invoice not found)",
+        target: to,
+      });
       throw AppError.conflict(
         `Invoice ${invoiceId} is not in an expected status for this transition (expected one of: ${from.join(", ")}, target: ${to})`,
         "INVOICE_STATUS_CONFLICT",
@@ -48,7 +60,7 @@ export async function transition(
       ...(patch.lastError ? { detail: { lastError: patch.lastError } } : {}),
     });
 
-    deps.logger.info("Invoice status transition", { invoiceId, from, to });
+    deps.logger.debug("Invoice status transition", { invoiceId, from, to });
 
     return updated;
   });

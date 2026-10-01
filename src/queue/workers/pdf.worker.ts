@@ -42,11 +42,14 @@ export function createPdfWorker(deps: PdfDeps): Worker<PdfJobData> {
   );
 
   worker.on("failed", (job, err) => {
-    deps.logger.error("PDF render job failed", {
-      invoiceId: job?.data.invoiceId,
-      attemptsMade: job?.attemptsMade,
-      error: err.message,
-    });
+    const final = !job || isFinalAttempt(job);
+    const meta = { invoiceId: job?.data.invoiceId, attemptsMade: job?.attemptsMade, error: err.message };
+
+    if (final) {
+      deps.logger.error("PDF render job failed permanently; invoice marked FAILED", meta);
+    } else {
+      deps.logger.warn("PDF render job failed, will retry", meta);
+    }
   });
 
   return worker;

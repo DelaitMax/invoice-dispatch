@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Logger } from "@/utils/logger";
+import { maskEmail } from "@/utils/maskEmail";
 import type { Mailer, OutgoingMail, SendResult } from "./mailer";
 
 export interface ConsoleMailerConfig {
@@ -31,7 +32,7 @@ export function createConsoleMailer(config: ConsoleMailerConfig): Mailer {
       writeFileSync(join(config.outboxDir, `${messageId}-${mail.attachment.filename}`), mail.attachment.content);
 
       config.logger.info("Console mailer: email sent", {
-        to: mail.to,
+        to: maskEmail(mail.to),
         subject: mail.subject,
         messageId,
         outboxDir: config.outboxDir,

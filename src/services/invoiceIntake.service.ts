@@ -226,6 +226,12 @@ export async function createInvoice(input: CreateInvoiceInput, deps: IntakeDeps)
 
   await deps.requests.markOutcome(deps.db, requestRow.id, "ACCEPTED", invoice.id);
 
+  deps.logger.info("Invoice created", {
+    invoiceId: invoice.id,
+    invoiceNumber: invoice.invoiceNumber,
+    requestId: input.audit.requestId,
+  });
+
   try {
     await deps.pdfQueue.add("render", { invoiceId: invoice.id }, { jobId: `pdf-${invoice.id}` });
   } catch (err) {
