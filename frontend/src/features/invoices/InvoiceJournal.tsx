@@ -5,9 +5,20 @@ import { ErrorBanner } from "@/components/ErrorBanner";
 import { Input } from "@/components/Input";
 import { Spinner } from "@/components/Spinner";
 import { StatusBadge } from "@/components/Badge";
-import { useGetCurrentUserQuery } from "@/features/auth/authApi";
-import { invoicePdfUrl, isTerminalStatus, useGetInvoiceQuery, useLazyGetInvoiceQuery, useRetryInvoiceMutation } from "@/features/invoices/invoicesApi";
-import { addJournalEntry, listJournalEntries, removeJournalEntry, type JournalEntry } from "@/features/invoices/journal";
+import { useCurrentUser } from "@/features/auth/useCurrentUser";
+import {
+  invoicePdfUrl,
+  isTerminalStatus,
+  useGetInvoiceQuery,
+  useLazyGetInvoiceQuery,
+  useRetryInvoiceMutation,
+} from "@/features/invoices/invoicesApi";
+import {
+  addJournalEntry,
+  listJournalEntries,
+  removeJournalEntry,
+  type JournalEntry,
+} from "@/features/invoices/journal";
 import { formatMoney } from "@/features/invoices/money";
 import { getApiErrorCode, getApiErrorMessage } from "@/services/apiError";
 
@@ -64,7 +75,7 @@ function AddByIdForm({ onAdded }: { onAdded: () => void }) {
 }
 
 function JournalRow({ entry, onRemoved }: { entry: JournalEntry; onRemoved: () => void }) {
-  const { data: currentUser } = useGetCurrentUserQuery();
+  const { user: currentUser } = useCurrentUser();
   const [isTerminal, setIsTerminal] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const { data, error } = useGetInvoiceQuery(entry.invoiceId, { pollingInterval: isTerminal ? 0 : 2000 });

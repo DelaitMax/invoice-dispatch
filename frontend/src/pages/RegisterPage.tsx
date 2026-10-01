@@ -4,12 +4,13 @@ import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { Input } from "@/components/Input";
-import { useGetCurrentUserQuery, useRegisterMutation } from "@/features/auth/authApi";
+import { useRegisterMutation } from "@/features/auth/authApi";
+import { useCurrentUser } from "@/features/auth/useCurrentUser";
 import { getApiErrorMessage } from "@/services/apiError";
 
 export function RegisterPage() {
   const navigate = useNavigate();
-  const { data: currentUser } = useGetCurrentUserQuery();
+  const { user: currentUser } = useCurrentUser();
   const [register, { isLoading, error }] = useRegisterMutation();
 
   const [email, setEmail] = useState("");

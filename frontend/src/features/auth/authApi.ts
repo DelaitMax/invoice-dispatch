@@ -21,7 +21,14 @@ const authApi = api.injectEndpoints({
     }),
     logout: build.mutation<void, void>({
       query: () => ({ url: "/auth/logout", method: "POST" }),
-      invalidatesTags: ["CurrentUser", "Invoice"],
+      async onQueryStarted(_arg, { dispatch, queryFulfilled }) {
+        try {
+          await queryFulfilled;
+        } catch {
+          return;
+        }
+        dispatch(api.util.resetApiState());
+      },
     }),
   }),
 });

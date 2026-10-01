@@ -29,9 +29,6 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-//  - 401: invalidate CurrentUser → ProtectedRoute refetches /auth/me, gets 401, redirects to
-//    /login. Any endpoint can 401 once the cookie expires — not just /auth/me — and without
-//    this a JournalRow's poll would just spin against a dead session every 2s.
 export function createReactiveBaseQuery(rawQuery: ReactiveBaseQuery): ReactiveBaseQuery {
   return async (args, apiInstance, extraOptions) => {
     let result = await rawQuery(args, apiInstance, extraOptions);
@@ -44,7 +41,7 @@ export function createReactiveBaseQuery(rawQuery: ReactiveBaseQuery): ReactiveBa
     const { error } = result;
     if (!error) return result;
 
-    if (error.status === 401) {
+    if (error.status === 401 && !getRequestUrl(args).startsWith("/auth/")) {
       apiInstance.dispatch(api.util.invalidateTags(["CurrentUser"]));
     } else if (error.status === 403 && getErrorCode(error) === "ADMIN_REQUIRED") {
       apiInstance.dispatch(showToast({ id: "admin-required", kind: "error", message: "Нужны права администратора" }));

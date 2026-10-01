@@ -4,7 +4,8 @@ import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { Input } from "@/components/Input";
-import { useGetCurrentUserQuery, useLoginMutation } from "@/features/auth/authApi";
+import { useLoginMutation } from "@/features/auth/authApi";
+import { useCurrentUser } from "@/features/auth/useCurrentUser";
 import { getApiErrorMessage } from "@/services/apiError";
 
 interface LocationState {
@@ -14,7 +15,7 @@ interface LocationState {
 export function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { data: currentUser } = useGetCurrentUserQuery();
+  const { user: currentUser } = useCurrentUser();
   const [login, { isLoading, error }] = useLoginMutation();
 
   const [email, setEmail] = useState("");

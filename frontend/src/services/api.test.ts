@@ -63,11 +63,19 @@ describe("createReactiveBaseQuery", () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 
-  it("invalidates the session on any 401", async () => {
+  it("invalidates the session on a 401 from a non-/auth endpoint", async () => {
     const { run, dispatch } = setup({ error: apiError(401, "NOT_AUTHENTICATED") });
     await run();
     expect(dispatch).toHaveBeenCalledTimes(1);
     expect(dispatch.mock.calls[0]?.[0]).toMatchObject({ type: "api/invalidateTags" });
+  });
+
+  it("does not invalidate the session on a 401 from /auth/* (that would loop /auth/me forever)", async () => {
+    for (const url of ["/auth/me", "/auth/login", "/auth/logout"]) {
+      const { run, dispatch } = setup({ error: apiError(401, "NOT_AUTHENTICATED") });
+      await run({ url });
+      expect(dispatch).not.toHaveBeenCalled();
+    }
   });
 
   it("toasts on 403 ADMIN_REQUIRED but not on other 403s", async () => {

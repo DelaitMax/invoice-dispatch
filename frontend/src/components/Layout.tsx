@@ -2,7 +2,8 @@ import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/Button";
 import { ToastViewport } from "@/features/toasts/ToastViewport";
-import { useGetCurrentUserQuery, useLogoutMutation } from "@/features/auth/authApi";
+import { useLogoutMutation } from "@/features/auth/authApi";
+import { useCurrentUser } from "@/features/auth/useCurrentUser";
 import { useGetReadinessQuery } from "@/services/healthApi";
 
 function HealthDot() {
@@ -21,7 +22,7 @@ function HealthDot() {
 }
 
 function UserMenu() {
-  const { data: user } = useGetCurrentUserQuery();
+  const { user } = useCurrentUser();
   const [logout, { isLoading }] = useLogoutMutation();
 
   if (!user) return null;
