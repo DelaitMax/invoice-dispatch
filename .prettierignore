@@ -6,3 +6,4 @@ src/db/migrations
 docs/openapi.json
 db/schema.sql
 .env.example
+src/pdf/templates

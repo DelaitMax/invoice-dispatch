@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Invoice {{invoiceNumber}}</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: "DejaVu Sans", Arial, Helvetica, sans-serif;
+        color: #1a1a1a;
+        margin: 0;
+        padding: 0;
+        font-size: 12px;
+      }
+
+      .page {
+        padding: 8px;
+      }
+
+      .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 32px;
+      }
+
+      .brand {
+        font-size: 20px;
+        font-weight: 700;
+        color: #111111;
+      }
+
+      .sender {
+        margin-top: 8px;
+        line-height: 1.5;
+        color: #444444;
+      }
+
+      .invoice-title {
+        text-align: right;
+      }
+
+      .invoice-title h1 {
+        font-size: 28px;
+        margin: 0;
+        letter-spacing: 2px;
+        color: #111111;
+      }
+
+      .invoice-meta {
+        margin-top: 12px;
+        text-align: right;
+        color: #444444;
+        line-height: 1.6;
+      }
+
+      .invoice-meta strong {
+        color: #111111;
+      }
+
+      .bill-to {
+        margin-bottom: 32px;
+      }
+
+      .bill-to h2,
+      .notes h2 {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        color: #888888;
+        margin: 0 0 8px 0;
+      }
+
+      .bill-to .name {
+        font-weight: 700;
+        font-size: 14px;
+        color: #111111;
+      }
+
+      .bill-to .details {
+        color: #444444;
+        line-height: 1.5;
+        margin-top: 4px;
+      }
+
+      table.items {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 24px;
+      }
+
+      table.items th {
+        text-align: left;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: #888888;
+        border-bottom: 2px solid #dddddd;
+        padding: 8px 4px;
+      }
+
+      table.items td {
+        padding: 10px 4px;
+        border-bottom: 1px solid #eeeeee;
+        color: #222222;
+      }
+
+      table.items th.num,
+      table.items td.num {
+        text-align: right;
+      }
+
+      .totals {
+        display: flex;
+        justify-content: flex-end;
+      }
+
+      .totals table {
+        border-collapse: collapse;
+      }
+
+      .totals td {
+        padding: 6px 8px;
+      }
+
+      .totals .total-label {
+        font-size: 14px;
+        font-weight: 700;
+        color: #111111;
+        text-align: right;
+      }
+
+      .totals .total-value {
+        font-size: 20px;
+        font-weight: 700;
+        color: #111111;
+        text-align: right;
+        white-space: nowrap;
+      }
+
+      .notes {
+        margin-top: 32px;
+        padding-top: 16px;
+        border-top: 1px solid #eeeeee;
+        color: #444444;
+        line-height: 1.6;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <div class="header">
+        <div>
+          <div class="brand">{{sender.brand}}</div>
+          <div class="sender">
+            {{sender.name}}<br />
+            {{sender.address.line1}}{{#if sender.address.line2}}<br />{{sender.address.line2}}{{/if}}<br />
+            {{#if sender.address.city}}{{sender.address.city}}{{/if}}{{#if
+              sender.address.postalCode
+            }}, {{sender.address.postalCode}}{{/if}}<br />
+            {{#if sender.address.country}}{{sender.address.country}}<br />{{/if}}
+            {{sender.email}}{{#if sender.phone}} &middot; {{sender.phone}}{{/if}}
+          </div>
+        </div>
+        <div class="invoice-title">
+          <h1>INVOICE</h1>
+          <div class="invoice-meta">
+            <div><strong>{{invoiceNumber}}</strong></div>
+            <div>Date issued: {{issuedAtFormatted}}</div>
+            {{#if dueAtFormatted}}<div>Due date: {{dueAtFormatted}}</div>{{/if}}
+          </div>
+        </div>
+      </div>
+
+      <div class="bill-to">
+        <h2>Bill To</h2>
+        <div class="name">{{client.firstName}} {{client.lastName}}</div>
+        <div class="details">
+          {{#if client.company}}
+          {{client.company.name}}<br />
+          {{client.company.addressLine1}}{{#if
+            client.company.addressLine2
+          }}, {{client.company.addressLine2}}{{/if}}<br />
+          {{#if client.company.city}}{{client.company.city}}{{/if}}{{#if
+            client.company.postalCode
+          }}, {{client.company.postalCode}}{{/if}}{{#if
+            client.company.country
+          }}, {{client.company.country}}{{/if}}<br />
+          {{/if}}
+          {{client.email}}
+        </div>
+      </div>
+
+      <table class="items">
+        <thead>
+          <tr>
+            <th class="num">#</th>
+            <th>Description</th>
+            <th class="num">Qty</th>
+            <th class="num">Unit price</th>
+            <th class="num">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{#each items}}
+          <tr>
+            <td class="num">{{position}}</td>
+            <td>{{description}}</td>
+            <td class="num">{{quantity}}</td>
+            <td class="num">{{unitAmountFormatted}}</td>
+            <td class="num">{{amountFormatted}}</td>
+          </tr>
+          {{/each}}
+        </tbody>
+      </table>
+
+      <div class="totals">
+        <table>
+          <tr>
+            <td class="total-label">Total ({{currency}})</td>
+            <td class="total-value">{{totalFormatted}}</td>
+          </tr>
+        </table>
+      </div>
+
+      {{#if notes}}
+      <div class="notes">
+        <h2>Notes</h2>
+        <div>{{notes}}</div>
+      </div>
+      {{/if}}
+    </div>
+  </body>
+</html>
