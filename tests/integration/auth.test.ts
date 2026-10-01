@@ -105,6 +105,15 @@ describe("POST /auth/register, /auth/login, /auth/logout, GET /auth/me", () => {
     expect(right.body.email).toBe(email);
   });
 
+  it("rejects a nonexistent email the same way as a wrong password, without leaking which", async () => {
+    const response = await request(app)
+      .post("/auth/login")
+      .send({ email: `nobody-${crypto.randomUUID()}@example.com`, password: "whatever-password" });
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe("INVALID_CREDENTIALS");
+  });
+
   it("GET /auth/me requires a session and echoes the logged-in user", async () => {
     const anonymous = await request(app).get("/auth/me");
     expect(anonymous.status).toBe(401);
