@@ -4,7 +4,7 @@ import { redisClient } from "@/lib/redis";
 import { createMailer } from "@/mail";
 import { senderProfile } from "@/config/sender";
 import { findInvoiceDocument, upsertInvoiceDocument } from "@/repositories/invoiceDocuments.repository";
-import { findInvoiceById } from "@/repositories/invoices.repository";
+import { findInvoiceById, findStuckInvoices } from "@/repositories/invoices.repository";
 import { listInvoiceItems } from "@/repositories/invoiceItems.repository";
 import { transition } from "@/services/invoiceStatus.service";
 import { logger } from "@/utils/logger";
@@ -14,7 +14,7 @@ import { startWorkers, stopWorkers, type WorkerHandles } from "@/queue/bootstrap
 async function main(): Promise<void> {
   const handles: WorkerHandles = await startWorkers({
     db,
-    invoices: { findById: findInvoiceById },
+    invoices: { findById: findInvoiceById, findStuck: findStuckInvoices },
     items: { list: listInvoiceItems },
     documents: { upsert: upsertInvoiceDocument, findByInvoiceId: findInvoiceDocument },
     status: { transition },

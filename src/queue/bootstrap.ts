@@ -17,12 +17,14 @@ import type { SenderProfile } from "@/config/sender";
 import type { EmailJobData, PdfJobData } from "@/types/queue.types";
 import type { Logger } from "@/utils/logger";
 import { emailQueue } from "./emailQueue";
+import { pdfQueue } from "./pdfQueue";
 import { createEmailWorker } from "./workers/email.worker";
 import { createPdfWorker } from "./workers/pdf.worker";
+import { startSweeper, type SweeperHandle, type SweeperInvoicesRepository } from "./workers/sweeper.worker";
 
 export interface BootstrapWorkersDeps {
   readonly db: Database;
-  readonly invoices: PdfInvoicesRepository & EmailInvoicesRepository;
+  readonly invoices: PdfInvoicesRepository & EmailInvoicesRepository & SweeperInvoicesRepository;
   readonly items: InvoiceItemsRepository;
   readonly documents: PdfInvoiceDocumentsRepository & EmailInvoiceDocumentsRepository;
   readonly status: StatusService;
@@ -35,6 +37,7 @@ export interface WorkerHandles {
   readonly browser: BrowserHandle;
   readonly pdfWorker: Worker<PdfJobData>;
   readonly emailWorker: Worker<EmailJobData>;
+  readonly sweeper: SweeperHandle;
 }
 
 export async function startWorkers(deps: BootstrapWorkersDeps): Promise<WorkerHandles> {
@@ -65,10 +68,23 @@ export async function startWorkers(deps: BootstrapWorkersDeps): Promise<WorkerHa
     logger: deps.logger,
   });
 
-  return { browser, pdfWorker, emailWorker };
+  const sweeper = startSweeper(
+    {
+      db: deps.db,
+      invoices: deps.invoices,
+      pdfQueue,
+      emailQueue,
+      stuckTimeoutMs: env.QUEUE_STUCK_TIMEOUT_MS,
+      logger: deps.logger,
+    },
+    env.QUEUE_STUCK_SWEEP_INTERVAL_MS,
+  );
+
+  return { browser, pdfWorker, emailWorker, sweeper };
 }
 
 export async function stopWorkers(handles: WorkerHandles): Promise<void> {
+  handles.sweeper.stop();
   await handles.pdfWorker.close();
   await handles.emailWorker.close();
   await handles.browser.close();
