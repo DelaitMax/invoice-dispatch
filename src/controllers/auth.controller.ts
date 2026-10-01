@@ -42,7 +42,8 @@ export async function registerHandler(req: Request, res: Response): Promise<void
 }
 
 export function logoutHandler(_req: Request, res: Response): void {
-  res.clearCookie(env.JWT_COOKIE_NAME, { path: "/" });
+  const { maxAge: _maxAge, ...clearOptions } = cookieOptions();
+  res.clearCookie(env.JWT_COOKIE_NAME, clearOptions);
   res.status(StatusCodes.NO_CONTENT).send();
 }
 
