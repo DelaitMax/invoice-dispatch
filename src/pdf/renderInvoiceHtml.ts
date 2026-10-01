@@ -2,16 +2,11 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import Handlebars from "handlebars";
 import type { BillingSnapshot, InvoiceItemView } from "@/types/invoice.types";
+import { formatDisplayDate } from "@/utils/date";
 import { formatMinor } from "@/utils/money";
 
 const TEMPLATE_PATH = join(__dirname, "templates", "invoice.hbs");
 const renderTemplate = Handlebars.compile(readFileSync(TEMPLATE_PATH, "utf8"));
-
-const DISPLAY_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", { year: "numeric", month: "long", day: "numeric" });
-
-function formatDisplayDate(date: Date): string {
-  return DISPLAY_DATE_FORMATTER.format(date);
-}
 
 export interface RenderInvoiceHtmlInput {
   readonly snapshot: BillingSnapshot;

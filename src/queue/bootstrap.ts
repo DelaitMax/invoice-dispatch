@@ -2,29 +2,39 @@ import type { Worker } from "bullmq";
 import type { Database } from "@/db/client";
 import { launchBrowser, type BrowserHandle } from "@/pdf/browser";
 import { env } from "@/config/env";
+import type { Mailer } from "@/mail/mailer";
 import type {
-  InvoiceDocumentsRepository,
+  InvoiceDocumentsRepository as PdfInvoiceDocumentsRepository,
   InvoiceItemsRepository,
-  InvoicesRepository,
+  InvoicesRepository as PdfInvoicesRepository,
 } from "@/services/invoicePdf.service";
+import type {
+  InvoiceDocumentsRepository as EmailInvoiceDocumentsRepository,
+  InvoicesRepository as EmailInvoicesRepository,
+} from "@/services/invoiceEmail.service";
 import type { StatusService } from "@/services/invoiceStatus.service";
-import type { PdfJobData } from "@/types/queue.types";
+import type { SenderProfile } from "@/config/sender";
+import type { EmailJobData, PdfJobData } from "@/types/queue.types";
 import type { Logger } from "@/utils/logger";
 import { emailQueue } from "./emailQueue";
+import { createEmailWorker } from "./workers/email.worker";
 import { createPdfWorker } from "./workers/pdf.worker";
 
 export interface BootstrapWorkersDeps {
   readonly db: Database;
-  readonly invoices: InvoicesRepository;
+  readonly invoices: PdfInvoicesRepository & EmailInvoicesRepository;
   readonly items: InvoiceItemsRepository;
-  readonly documents: InvoiceDocumentsRepository;
+  readonly documents: PdfInvoiceDocumentsRepository & EmailInvoiceDocumentsRepository;
   readonly status: StatusService;
+  readonly mailer: Mailer;
+  readonly sender: SenderProfile;
   readonly logger: Logger;
 }
 
 export interface WorkerHandles {
   readonly browser: BrowserHandle;
   readonly pdfWorker: Worker<PdfJobData>;
+  readonly emailWorker: Worker<EmailJobData>;
 }
 
 export async function startWorkers(deps: BootstrapWorkersDeps): Promise<WorkerHandles> {
@@ -45,10 +55,21 @@ export async function startWorkers(deps: BootstrapWorkersDeps): Promise<WorkerHa
     logger: deps.logger,
   });
 
-  return { browser, pdfWorker };
+  const emailWorker = createEmailWorker({
+    db: deps.db,
+    invoices: deps.invoices,
+    documents: deps.documents,
+    status: deps.status,
+    mailer: deps.mailer,
+    sender: deps.sender,
+    logger: deps.logger,
+  });
+
+  return { browser, pdfWorker, emailWorker };
 }
 
 export async function stopWorkers(handles: WorkerHandles): Promise<void> {
   await handles.pdfWorker.close();
+  await handles.emailWorker.close();
   await handles.browser.close();
 }

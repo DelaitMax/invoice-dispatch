@@ -1,9 +1,11 @@
 import "dotenv/config";
 import { db, closeDb } from "@/db/client";
 import { redisClient } from "@/lib/redis";
+import { createMailer } from "@/mail";
+import { senderProfile } from "@/config/sender";
+import { findInvoiceDocument, upsertInvoiceDocument } from "@/repositories/invoiceDocuments.repository";
 import { findInvoiceById } from "@/repositories/invoices.repository";
 import { listInvoiceItems } from "@/repositories/invoiceItems.repository";
-import { upsertInvoiceDocument } from "@/repositories/invoiceDocuments.repository";
 import { transition } from "@/services/invoiceStatus.service";
 import { logger } from "@/utils/logger";
 import { env } from "@/config/env";
@@ -14,12 +16,17 @@ async function main(): Promise<void> {
     db,
     invoices: { findById: findInvoiceById },
     items: { list: listInvoiceItems },
-    documents: { upsert: upsertInvoiceDocument },
+    documents: { upsert: upsertInvoiceDocument, findByInvoiceId: findInvoiceDocument },
     status: { transition },
+    mailer: createMailer(env),
+    sender: senderProfile,
     logger,
   });
 
-  logger.info("Worker process started", { pdfConcurrency: env.QUEUE_PDF_CONCURRENCY });
+  logger.info("Worker process started", {
+    pdfConcurrency: env.QUEUE_PDF_CONCURRENCY,
+    emailConcurrency: env.QUEUE_EMAIL_CONCURRENCY,
+  });
 
   let shuttingDown = false;
 
