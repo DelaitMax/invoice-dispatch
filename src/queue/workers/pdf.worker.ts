@@ -5,7 +5,7 @@ import { QUEUE_NAME_PDF } from "@/constants";
 import { ClaimLostError } from "@/services/claimLost.error";
 import { renderAndStoreInvoicePdf, type PdfDeps } from "@/services/invoicePdf.service";
 import type { PdfJobData } from "@/types/queue.types";
-import { createQueueConnection } from "../connection";
+import { createWorkerConnection } from "../connection";
 
 function isFinalAttempt(job: Job<PdfJobData>): boolean {
   const attempts = job.opts.attempts ?? 1;
@@ -54,7 +54,7 @@ export function createPdfWorker(deps: PdfDeps): Worker<PdfJobData> {
         throw err;
       }
     },
-    { connection: createQueueConnection(), concurrency: env.QUEUE_PDF_CONCURRENCY },
+    { connection: createWorkerConnection(), concurrency: env.QUEUE_PDF_CONCURRENCY },
   );
 
   worker.on("failed", (job, err) => {

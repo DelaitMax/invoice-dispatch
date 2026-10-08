@@ -5,7 +5,7 @@ import { QUEUE_NAME_EMAIL } from "@/constants";
 import { ClaimLostError } from "@/services/claimLost.error";
 import { type EmailDeps, sendInvoiceEmail } from "@/services/invoiceEmail.service";
 import type { EmailJobData } from "@/types/queue.types";
-import { createQueueConnection } from "../connection";
+import { createWorkerConnection } from "../connection";
 
 function isFinalAttempt(job: Job<EmailJobData>): boolean {
   const attempts = job.opts.attempts ?? 1;
@@ -19,7 +19,7 @@ export function createEmailWorker(deps: EmailDeps): Worker<EmailJobData> {
       await sendInvoiceEmail(job.data.invoiceId, isFinalAttempt(job), deps, job.id ?? randomUUID());
     },
     {
-      connection: createQueueConnection(),
+      connection: createWorkerConnection(),
       concurrency: env.QUEUE_EMAIL_CONCURRENCY,
       limiter: { max: env.EMAIL_RATE_LIMIT_MAX, duration: env.EMAIL_RATE_LIMIT_DURATION_MS },
     },

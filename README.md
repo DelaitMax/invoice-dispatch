@@ -204,6 +204,9 @@ Copy `.env.example` to `.env` and adjust. Every variable is validated at startup
 | `QUEUE_JOB_ATTEMPTS` / `QUEUE_BACKOFF_DELAY_MS`                                          | no                            | `3` / `3000`                                 | Exponential backoff                                                                                        |
 | `QUEUE_STUCK_SWEEP_INTERVAL_MS` / `QUEUE_STUCK_TIMEOUT_MS`                               | no                            | `60000` / `120000`                           | Sweeper cadence / staleness threshold                                                                      |
 | `QUEUE_LEASE_MS`                                                                         | no                            | `120000`                                     | How long a worker's claim on an in-flight invoice is honoured for others; must exceed `PDF_TIMEOUT_MS`     |
+| `REDIS_COMMAND_TIMEOUT_MS`                                                               | no                            | `1000`                                       | Max time of one Redis command on the fail-fast client (rate limiter, readiness, queue producers)           |
+| `HEALTH_CHECK_TIMEOUT_MS`                                                                | no                            | `2000`                                       | Deadline for each `/health/ready` probe (database, Redis)                                                  |
+| `QUEUE_ENQUEUE_TIMEOUT_MS`                                                               | no                            | `2000`                                       | Deadline for adding a job to a queue; on expiry the sweeper picks the invoice up                           |
 | `EMAIL_RATE_LIMIT_MAX` / `EMAIL_RATE_LIMIT_DURATION_MS`                                  | no                            | `50` / `60000`                               | Throttles the email worker against the provider's quota                                                    |
 | `RATE_LIMIT_WINDOW_MS` / `RATE_LIMIT_MAX`                                                | no                            | `60000` / `30`                               | `POST /api/invoices`, Redis-backed, fails open with a `warn` log if Redis is down                          |
 | `SHUTDOWN_TIMEOUT_MS`                                                                    | no                            | `15000`                                      | Force-exit timeout for graceful shutdown                                                                   |
@@ -329,6 +332,21 @@ delivery is unknown and where to check (Mailgun events for `v:invoice-id`). The 
 tests that matter: `pipeline.retry.test.ts` (real BullMQ + Postgres + Redis + the real
 `mailgun.js` client against a local stub: 503, then OK → `SENT` after exactly 2 calls),
 `invoices.lease.test.ts` and `invoices.leaseMonitor.test.ts`.
+
+## When Redis is down
+
+Redis only speeds up the happy path (ADR-9), so an outage must degrade, not hang. Two kinds of
+connection, on purpose: everything on a request path (the rate limiter, `/health/ready`, the
+queue **producers** that `add` jobs) shares a **fail-fast** client — `enableOfflineQueue: false`,
+`commandTimeout`, one retry — so a dead Redis is a quick error instead of a command that waits
+for the reconnect forever; only the BullMQ **workers** use `maxRetriesPerRequest: null`, which
+is what their blocking commands need. Result: the limiter fails open with a `warn`, invoice
+creation commits and answers 202 (the enqueue is best-effort, bounded by
+`QUEUE_ENQUEUE_TIMEOUT_MS`, and the sweeper picks the invoice up), and readiness answers 503
+within `HEALTH_CHECK_TIMEOUT_MS`. The limiter uses a small stateless store
+(`src/lib/redisRateLimitStore.ts`) instead of `rate-limit-redis`: that library caches the
+promise of its start-up script load, so a process that started during an outage would keep a
+permanently dead limiter. Covered by `tests/integration/redisDown.test.ts`.
 
 ## Who can see and send what
 

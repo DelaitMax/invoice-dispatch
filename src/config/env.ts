@@ -25,6 +25,9 @@ const commonEnvSchema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required").url("DATABASE_URL must be a valid connection string"),
   DATABASE_POOL_MAX: z.coerce.number().int().positive().default(10),
 
+  REDIS_COMMAND_TIMEOUT_MS: z.coerce.number().int().positive().default(1000),
+  HEALTH_CHECK_TIMEOUT_MS: z.coerce.number().int().positive().default(2000),
+  QUEUE_ENQUEUE_TIMEOUT_MS: z.coerce.number().int().positive().default(2000),
   REDIS_URL: z.string().min(1, "REDIS_URL is required").url("REDIS_URL must be a valid connection string"),
 
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),

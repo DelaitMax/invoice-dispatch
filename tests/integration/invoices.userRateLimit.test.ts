@@ -14,10 +14,12 @@ import { closeDb } from "@/db/client";
 import { seedTestFixtures, TEST_CLIENT_EMAIL } from "./fixtures";
 import { truncateInvoiceTables } from "./helpers";
 import { loginAsUser } from "./helpers/auth";
+import { waitForRedisReady } from "./helpers/redis";
 
 const app = createApp();
 
 beforeAll(async () => {
+  await waitForRedisReady();
   await seedTestFixtures();
 });
 beforeEach(async () => {

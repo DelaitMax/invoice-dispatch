@@ -2,15 +2,20 @@ import Redis from "ioredis";
 import { env } from "@/config/env";
 import { logger } from "@/utils/logger";
 
-/**
- * `maxRetriesPerRequest: null` is BullMQ's hard requirement for its blocking commands to work
- * (it throws at startup otherwise) — harmless for the rate limiter and health checks that also
- * share this connection, so one client is enough for the whole process.
- */
-export const redisClient = new Redis(env.REDIS_URL, {
-  maxRetriesPerRequest: null,
-});
+export function createFailFastRedis(): Redis {
+  const client = new Redis(env.REDIS_URL, {
+    enableOfflineQueue: false,
+    maxRetriesPerRequest: 1,
+    commandTimeout: env.REDIS_COMMAND_TIMEOUT_MS,
+    connectTimeout: 5000,
+    retryStrategy: (attempt) => Math.min(attempt * 200, 2000),
+  });
 
-redisClient.on("error", (err: Error) => {
-  logger.error("Redis connection error", { error: err.message });
-});
+  client.on("error", (err: Error) => {
+    logger.error("Redis connection error", { error: err.message });
+  });
+
+  return client;
+}
+
+export const redisClient = createFailFastRedis();
