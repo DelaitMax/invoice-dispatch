@@ -10,6 +10,7 @@ export function createMailer(env: Env): Mailer {
       apiKey: env.MAILGUN_API_KEY,
       domain: env.MAILGUN_DOMAIN,
       baseUrl: env.MAILGUN_BASE_URL,
+      timeoutMs: env.MAILGUN_TIMEOUT_MS,
       fromName: env.MAIL_FROM_NAME,
       fromEmail: env.MAIL_FROM_EMAIL,
     });

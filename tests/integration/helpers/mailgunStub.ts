@@ -6,6 +6,7 @@ export type StubReaction = { readonly status: number; readonly body?: unknown } 
 export interface MailgunStub {
   readonly url: string;
   readonly requests: ReadonlyArray<{ readonly path: string; readonly body: string }>;
+  setDefault(reaction: StubReaction): void;
   close(): Promise<void>;
 }
 
@@ -13,6 +14,7 @@ const OK_BODY = { id: "<stub-message-id@mg.example.com>", message: "Queued. Than
 
 export async function startMailgunStub(script: ReadonlyArray<StubReaction> = []): Promise<MailgunStub> {
   const remaining = [...script];
+  let fallback: StubReaction = { status: 200, body: OK_BODY };
   const requests: Array<{ path: string; body: string }> = [];
   const openSockets = new Set<import("node:net").Socket>();
 
@@ -21,7 +23,7 @@ export async function startMailgunStub(script: ReadonlyArray<StubReaction> = [])
     req.on("data", (chunk: Buffer) => chunks.push(chunk));
     req.on("end", () => {
       requests.push({ path: req.url ?? "", body: Buffer.concat(chunks).toString("latin1") });
-      const reaction = remaining.shift() ?? { status: 200, body: OK_BODY };
+      const reaction = remaining.shift() ?? fallback;
 
       if (reaction === "drop") {
         req.socket.destroy();
@@ -47,6 +49,9 @@ export async function startMailgunStub(script: ReadonlyArray<StubReaction> = [])
   return {
     url: `http://127.0.0.1:${port}`,
     requests,
+    setDefault: (reaction) => {
+      fallback = reaction;
+    },
     close: () =>
       new Promise<void>((resolve) => {
         for (const socket of openSockets) {

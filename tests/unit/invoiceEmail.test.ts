@@ -1,5 +1,6 @@
 import { UnrecoverableError } from "bullmq";
 import { describe, expect, it, vi } from "vitest";
+import { MailConfigurationError } from "@/mail/errors";
 import { ClaimLostError } from "@/services/claimLost.error";
 import { sendInvoiceEmail, type EmailDeps } from "@/services/invoiceEmail.service";
 import type { Logger } from "@/utils/logger";
@@ -188,5 +189,48 @@ describe("sendInvoiceEmail", () => {
     const sentMail = vi.mocked(deps.mailer.send).mock.calls[0]?.[0];
     expect(sentMail?.html).not.toContain("<script>");
     expect(sentMail?.html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+  });
+
+  describe("Mailgun failure kinds", () => {
+    const noResponse = { status: 400, message: "ECONNRESET", details: "socket hang up", type: "MailgunAPIError" };
+
+    it("a no-response failure (the library says status 400) is retried, not failed", async () => {
+      const deps = buildDeps({
+        mailer: { send: vi.fn(async () => Promise.reject(Object.assign(new Error("ECONNRESET"), noResponse))) },
+      });
+
+      await expect(sendInvoiceEmail(INVOICE_ID, false, deps)).rejects.not.toBeInstanceOf(UnrecoverableError);
+
+      expect(deps.status.transition).toHaveBeenCalledWith(
+        deps.db,
+        deps,
+        INVOICE_ID,
+        ["EMAIL_SENDING"],
+        "PDF_READY",
+        expect.anything(),
+        { claimToken: expect.any(String) },
+      );
+    });
+
+    it.each([false, true])(
+      "a 401 (isFinalAttempt=%s) hands the invoice back and raises MailConfigurationError — it never fails the invoice, not even on the last attempt",
+      async (isFinal) => {
+        const unauthorized = Object.assign(new Error("Unauthorized"), { status: 401, details: "Forbidden" });
+        const deps = buildDeps({ mailer: { send: vi.fn(async () => Promise.reject(unauthorized)) } });
+
+        await expect(sendInvoiceEmail(INVOICE_ID, isFinal, deps)).rejects.toBeInstanceOf(MailConfigurationError);
+
+        expect(deps.status.transition).toHaveBeenCalledTimes(1);
+        expect(deps.status.transition).toHaveBeenCalledWith(
+          deps.db,
+          deps,
+          INVOICE_ID,
+          ["EMAIL_SENDING"],
+          "PDF_READY",
+          { lastError: expect.stringContaining("configuration problem (HTTP 401)") },
+          { claimToken: expect.any(String) },
+        );
+      },
+    );
   });
 });

@@ -78,4 +78,11 @@ describe("loadEnv", () => {
 
     await expect(import("@/config/env")).rejects.toThrow(/QUEUE_LEASE_MS/);
   });
+
+  it("rejects MAILGUN_TIMEOUT_MS that the lease cannot outlast (a send must never outlive its lease)", async () => {
+    process.env["MAILGUN_TIMEOUT_MS"] = "130000";
+    process.env["QUEUE_LEASE_MS"] = "120000";
+
+    await expect(import("@/config/env")).rejects.toThrow(/MAILGUN_TIMEOUT_MS/);
+  });
 });

@@ -204,6 +204,8 @@ Copy `.env.example` to `.env` and adjust. Every variable is validated at startup
 | `QUEUE_JOB_ATTEMPTS` / `QUEUE_BACKOFF_DELAY_MS`                                          | no                            | `3` / `3000`                                 | Exponential backoff                                                                                        |
 | `QUEUE_STUCK_SWEEP_INTERVAL_MS` / `QUEUE_STUCK_TIMEOUT_MS`                               | no                            | `60000` / `120000`                           | Sweeper cadence / staleness threshold                                                                      |
 | `QUEUE_LEASE_MS`                                                                         | no                            | `120000`                                     | How long a worker's claim on an in-flight invoice is honoured for others; must exceed `PDF_TIMEOUT_MS`     |
+| `MAILGUN_TIMEOUT_MS`                                                                     | no                            | `15000`                                      | Timeout of one Mailgun HTTP request; must be below `QUEUE_LEASE_MS`                                        |
+| `MAIL_CONFIG_PAUSE_MS`                                                                   | no                            | `300000`                                     | How long the email queue stays paused after a Mailgun configuration error before it probes again           |
 | `REDIS_COMMAND_TIMEOUT_MS`                                                               | no                            | `1000`                                       | Max time of one Redis command on the fail-fast client (rate limiter, readiness, queue producers)           |
 | `HEALTH_CHECK_TIMEOUT_MS`                                                                | no                            | `2000`                                       | Deadline for each `/health/ready` probe (database, Redis)                                                  |
 | `QUEUE_ENQUEUE_TIMEOUT_MS`                                                               | no                            | `2000`                                       | Deadline for adding a job to a queue; on expiry the sweeper picks the invoice up                           |
@@ -332,6 +334,25 @@ delivery is unknown and where to check (Mailgun events for `v:invoice-id`). The 
 tests that matter: `pipeline.retry.test.ts` (real BullMQ + Postgres + Redis + the real
 `mailgun.js` client against a local stub: 503, then OK → `SENT` after exactly 2 calls),
 `invoices.lease.test.ts` and `invoices.leaseMonitor.test.ts`.
+
+## How a failed send is treated
+
+Decided by whose problem it is (`src/mail/errors.ts`): **permanent** (a genuine 400, 406, 413 —
+the invoice's own: bad address, suppression list, oversize) fails the invoice at once;
+**configuration** (401, 403, 404 — a rotated key, the wrong US/EU host, an unknown domain) never
+fails an invoice — it is handed back untouched, the email queue is paused (`MAIL_CONFIG_PAUSE_MS`,
+resumed automatically or by a worker restart) and an `ALERT: queue paused` error is logged with
+`alert: "QUEUE_PAUSED"`; **temporary** (no response, timeout, 429, 5xx) is retried with backoff and
+only fails the invoice when the attempts are used up.
+
+One trap worth knowing: `mailgun.js` reports a failure with **no HTTP response at all**
+(`ECONNREFUSED`, a reset socket, a timeout) as `status: 400` — the same status as a genuine
+"Bad Request". The field that tells them apart is `message`: the HTTP reason phrase when the
+server answered, the transport error code (`ECONNRESET`, …) when it did not. This is pinned
+against the real library in `tests/integration/mailgun.errors.test.ts`, not against hand-made
+errors. Every request has a timeout (`MAILGUN_TIMEOUT_MS`), so a hung connection can no longer
+hold a worker slot forever. As with any at-least-once retry, a connection that drops _after_
+Mailgun accepted the message can produce a duplicate; Mailgun has no idempotency key.
 
 ## When Redis is down
 

@@ -18,6 +18,7 @@ import type { EmailJobData, PdfJobData } from "@/types/queue.types";
 import type { Logger } from "@/utils/logger";
 import { emailQueue } from "./emailQueue";
 import { pdfQueue } from "./pdfQueue";
+import { createQueueBreaker, type QueueBreaker } from "./queueBreaker";
 import { createEmailWorker } from "./workers/email.worker";
 import { createPdfWorker } from "./workers/pdf.worker";
 import { startSweeper, type SweeperHandle, type SweeperInvoicesRepository } from "./workers/sweeper.worker";
@@ -38,6 +39,7 @@ export interface WorkerHandles {
   readonly pdfWorker: Worker<PdfJobData>;
   readonly emailWorker: Worker<EmailJobData>;
   readonly sweeper: SweeperHandle;
+  readonly emailBreaker: QueueBreaker;
 }
 
 export async function startWorkers(deps: BootstrapWorkersDeps): Promise<WorkerHandles> {
@@ -59,7 +61,15 @@ export async function startWorkers(deps: BootstrapWorkersDeps): Promise<WorkerHa
     logger: deps.logger,
   });
 
+  const emailBreaker = createQueueBreaker({
+    queue: emailQueue,
+    pauseMs: env.MAIL_CONFIG_PAUSE_MS,
+    logger: deps.logger,
+  });
+  await emailBreaker.resume();
+
   const emailWorker = createEmailWorker({
+    breaker: emailBreaker,
     db: deps.db,
     invoices: deps.invoices,
     documents: deps.documents,
@@ -83,11 +93,12 @@ export async function startWorkers(deps: BootstrapWorkersDeps): Promise<WorkerHa
     env.QUEUE_STUCK_SWEEP_INTERVAL_MS,
   );
 
-  return { browser, pdfWorker, emailWorker, sweeper };
+  return { browser, pdfWorker, emailWorker, sweeper, emailBreaker };
 }
 
 export async function stopWorkers(handles: WorkerHandles): Promise<void> {
   handles.sweeper.stop();
+  handles.emailBreaker.dispose();
   await handles.pdfWorker.close();
   await handles.emailWorker.close();
   await pdfQueue.close();

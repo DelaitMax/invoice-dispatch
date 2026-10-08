@@ -1,11 +1,13 @@
-/**
- * 400 — invalid address/parameters; 401/403 — bad key/domain; 404 — unknown domain; 406 —
- * address on the suppression list; 413 — attachment too large. None of these change on
- * retry, so retrying is pure wasted quota.
- */
-const PERMANENT_STATUS = new Set([400, 401, 403, 404, 406, 413]);
+export type MailErrorKind = "permanent" | "configuration" | "temporary";
 
-function extractStatus(err: unknown): number | undefined {
+const PERMANENT_STATUS = new Set([400, 406, 413]);
+
+const CONFIGURATION_STATUS = new Set([401, 403, 404]);
+
+const TRANSPORT_CODE = /^(E[A-Z0-9_]+|ERR_[A-Z0-9_]+)$/;
+const AXIOS_HTTP_STATUS_CODES = new Set(["ERR_BAD_REQUEST", "ERR_BAD_RESPONSE"]);
+
+function readStatus(err: unknown): number | undefined {
   if (typeof err === "object" && err !== null && "status" in err) {
     const status = (err as { status: unknown }).status;
     return typeof status === "number" ? status : undefined;
@@ -13,9 +15,46 @@ function extractStatus(err: unknown): number | undefined {
   return undefined;
 }
 
-/** 429 and 5xx, plus anything without a recognizable HTTP status (network errors, timeouts),
- * are treated as temporary — worth retrying with backoff. */
-export function isPermanentMailError(err: unknown): boolean {
-  const status = extractStatus(err);
-  return status !== undefined && PERMANENT_STATUS.has(status);
+function readMessage(err: unknown): string {
+  if (typeof err === "object" && err !== null && "message" in err) {
+    const message = (err as { message: unknown }).message;
+    return typeof message === "string" ? message : "";
+  }
+  return "";
+}
+
+export function isNoResponseError(err: unknown): boolean {
+  if (readStatus(err) !== 400) {
+    return false;
+  }
+  const message = readMessage(err);
+  return message === "" || (TRANSPORT_CODE.test(message) && !AXIOS_HTTP_STATUS_CODES.has(message));
+}
+
+export function classifyMailError(err: unknown): MailErrorKind {
+  if (isNoResponseError(err)) {
+    return "temporary";
+  }
+
+  const status = readStatus(err);
+  if (status === undefined) {
+    return "temporary";
+  }
+  if (CONFIGURATION_STATUS.has(status)) {
+    return "configuration";
+  }
+  if (PERMANENT_STATUS.has(status)) {
+    return "permanent";
+  }
+  return "temporary";
+}
+
+export class MailConfigurationError extends Error {
+  constructor(
+    readonly httpStatus: number | undefined,
+    detail: string,
+  ) {
+    super(`Mail provider rejected the request for a configuration reason (HTTP ${httpStatus ?? "?"}): ${detail}`);
+    this.name = "MailConfigurationError";
+  }
 }

@@ -8,7 +8,7 @@ import type { StatusService } from "@/services/invoiceStatus.service";
 import { formatDisplayDate } from "@/utils/date";
 import type { Logger } from "@/utils/logger";
 import { formatMinor } from "@/utils/money";
-import { isPermanentMailError } from "@/mail/errors";
+import { classifyMailError, MailConfigurationError } from "@/mail/errors";
 import type { Mailer } from "@/mail/mailer";
 import { escapeHtml } from "@/utils/escapeHtml";
 import { ClaimLostError } from "./claimLost.error";
@@ -176,15 +176,15 @@ async function handleSendFailure(
   deps: EmailDeps,
   claimToken: string,
 ): Promise<never> {
-  const permanent = isPermanentMailError(err);
-  const lastError = err instanceof Error ? err.message : String(err);
+  const kind = classifyMailError(err);
+  const detail = err instanceof Error ? err.message : String(err);
+  const httpStatus = typeof err === "object" && err !== null && "status" in err ? Number(err.status) : undefined;
 
-  // A permanent error (bad address, suppression list, ...) never gets better on retry — it
-  // ends the invoice's journey right away, regardless of attempts remaining. A temporary
-  // error only ends it once BullMQ has genuinely exhausted its retries; before that the claim
-  // is handed back (EMAIL_SENDING -> PDF_READY) so the retry — and the audit trail — see an
-  // invoice that is waiting, not one that is somehow still being sent.
-  const target = permanent || isFinalAttempt ? "FAILED" : "PDF_READY";
+  const target = kind === "permanent" || (kind === "temporary" && isFinalAttempt) ? "FAILED" : "PDF_READY";
+  const lastError =
+    kind === "configuration"
+      ? `Email provider configuration problem (HTTP ${httpStatus ?? "?"}); sending is paused and will resume once it is fixed`
+      : detail;
 
   await deps.status
     .transition(deps.db, deps, invoiceId, ["EMAIL_SENDING"], target, { lastError }, { claimToken })
@@ -195,8 +195,11 @@ async function handleSendFailure(
       });
     });
 
-  if (permanent) {
-    throw new UnrecoverableError(lastError);
+  if (kind === "permanent") {
+    throw new UnrecoverableError(detail);
+  }
+  if (kind === "configuration") {
+    throw new MailConfigurationError(httpStatus, detail);
   }
 
   throw err;

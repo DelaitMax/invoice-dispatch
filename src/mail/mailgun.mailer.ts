@@ -6,6 +6,7 @@ export interface MailgunMailerConfig {
   readonly apiKey: string;
   readonly domain: string;
   readonly baseUrl: string;
+  readonly timeoutMs: number;
   readonly fromName: string;
   readonly fromEmail: string;
 }
@@ -15,6 +16,7 @@ export function createMailgunMailer(config: MailgunMailerConfig): Mailer {
     username: "api",
     key: config.apiKey,
     url: config.baseUrl,
+    timeout: config.timeoutMs,
   });
 
   return {
