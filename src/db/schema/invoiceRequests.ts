@@ -1,5 +1,6 @@
 import { bigserial, index, inet, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { invoices } from "./invoices";
+import { users } from "./users";
 
 export const invoiceRequests = pgTable(
   "invoice_requests",
@@ -12,6 +13,7 @@ export const invoiceRequests = pgTable(
     clientIp: inet("client_ip"),
     userAgent: text("user_agent"),
     requestId: text("request_id"),
+    userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
     outcome: text("outcome").notNull().default("RECEIVED"),
     receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
   },

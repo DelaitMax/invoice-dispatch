@@ -161,3 +161,17 @@ CREATE INDEX "invoices_lease_until_idx" ON "invoices" USING btree ("lease_until"
 -- expired leases, so the lease monitor surfaces them as FAILED (with an explicit note for
 -- EMAIL_SENDING) instead of leaving them invisible; ones genuinely in flight are left alone.
 UPDATE "invoices" SET "lease_until" = "updated_at" + interval '120 seconds' WHERE "status" IN ('PDF_RENDERING', 'EMAIL_SENDING') AND "lease_until" IS NULL;
+
+ALTER TABLE "invoices" ADD COLUMN "created_by" uuid;
+
+ALTER TABLE "invoice_requests" ADD COLUMN "user_id" uuid;
+
+ALTER TABLE "invoice_events" ADD COLUMN "user_id" uuid;
+
+ALTER TABLE "invoices" ADD CONSTRAINT "invoices_created_by_users_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;
+
+ALTER TABLE "invoice_requests" ADD CONSTRAINT "invoice_requests_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;
+
+ALTER TABLE "invoice_events" ADD CONSTRAINT "invoice_events_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;
+
+CREATE INDEX "invoices_created_by_idx" ON "invoices" USING btree ("created_by");

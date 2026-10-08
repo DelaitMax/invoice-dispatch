@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { like } from "drizzle-orm";
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "@/app";
@@ -51,7 +51,10 @@ describe("Idempotency-Key", () => {
     expect(second.status).toBe(200);
     expect(second.body.invoiceId).toBe(first.body.invoiceId);
 
-    const rows = await db.select().from(invoices).where(eq(invoices.idempotencyKey, IDEMPOTENCY_KEY));
+    const rows = await db
+      .select()
+      .from(invoices)
+      .where(like(invoices.idempotencyKey, `%:${IDEMPOTENCY_KEY}`));
     expect(rows).toHaveLength(1);
   });
 
@@ -72,7 +75,33 @@ describe("Idempotency-Key", () => {
     expect(second.status).toBe(409);
     expect(second.body.error.code).toBe("IDEMPOTENCY_KEY_CONFLICT");
 
-    const rows = await db.select().from(invoices).where(eq(invoices.idempotencyKey, IDEMPOTENCY_KEY));
+    const rows = await db
+      .select()
+      .from(invoices)
+      .where(like(invoices.idempotencyKey, `%:${IDEMPOTENCY_KEY}`));
     expect(rows).toHaveLength(1);
+  });
+
+  it("keys are private to the account that sent them: another account reusing the key gets its own invoice, never the first account's", async () => {
+    const otherCookie = await loginAsUser(app);
+    const body = {
+      email: TEST_CLIENT_EMAIL,
+      items: [{ description: "Consulting", quantity: 1, unitAmountMinor: 5000 }],
+    };
+
+    const first = await request(app)
+      .post("/api/invoices")
+      .set("Cookie", authCookie)
+      .set("Idempotency-Key", IDEMPOTENCY_KEY)
+      .send(body);
+    const other = await request(app)
+      .post("/api/invoices")
+      .set("Cookie", otherCookie)
+      .set("Idempotency-Key", IDEMPOTENCY_KEY)
+      .send(body);
+
+    expect(first.status).toBe(202);
+    expect(other.status).toBe(202);
+    expect(other.body.invoiceId).not.toBe(first.body.invoiceId);
   });
 });

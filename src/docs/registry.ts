@@ -94,7 +94,7 @@ registry.registerPath({
     401: UNAUTHORIZED,
     404: errorJson("The recipient email doesn't match a registered client (CLIENT_NOT_FOUND)"),
     409: errorJson("Idempotency-Key reused with a different body (IDEMPOTENCY_KEY_CONFLICT)"),
-    429: RATE_LIMITED,
+    429: errorJson("Per-IP limit (RATE_LIMITED) or this account's invoice quota (USER_RATE_LIMITED)"),
   },
 });
 
@@ -109,7 +109,9 @@ registry.registerPath({
     200: json("Invoice detail", invoiceDetailResponseSchema),
     400: VALIDATION_ERROR,
     401: UNAUTHORIZED,
-    404: errorJson("Invoice not found (INVOICE_NOT_FOUND)"),
+    404: errorJson(
+      "Invoice not found, or not yours — only the creator and admins can read an invoice (INVOICE_NOT_FOUND)",
+    ),
   },
 });
 
@@ -127,7 +129,9 @@ registry.registerPath({
     },
     400: VALIDATION_ERROR,
     401: UNAUTHORIZED,
-    404: errorJson("Invoice not found (INVOICE_NOT_FOUND)"),
+    404: errorJson(
+      "Invoice not found, or not yours — only the creator and admins can read an invoice (INVOICE_NOT_FOUND)",
+    ),
     409: errorJson("The PDF hasn't been rendered yet (PDF_NOT_READY)"),
   },
 });
@@ -144,7 +148,9 @@ registry.registerPath({
     400: VALIDATION_ERROR,
     401: UNAUTHORIZED,
     403: FORBIDDEN,
-    404: errorJson("Invoice not found (INVOICE_NOT_FOUND)"),
+    404: errorJson(
+      "Invoice not found, or not yours — only the creator and admins can read an invoice (INVOICE_NOT_FOUND)",
+    ),
     409: errorJson("Invoice is not in a retryable (FAILED) state (INVOICE_NOT_RETRYABLE)"),
   },
 });
@@ -158,6 +164,7 @@ registry.registerPath({
   responses: {
     201: json("Account created, session cookie set", authUserResponseSchema),
     400: errorJson("Validation failed, or the email is already registered (VALIDATION_ERROR, EMAIL_TAKEN)"),
+    403: errorJson("Registration is closed on this deployment — the default in production (REGISTRATION_DISABLED)"),
     429: RATE_LIMITED,
   },
 });

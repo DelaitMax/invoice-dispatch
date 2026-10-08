@@ -11,6 +11,7 @@ services:
       MAILGUN_API_KEY: ${MAILGUN_API_KEY:?must be set}
       MAILGUN_DOMAIN: ${MAILGUN_DOMAIN:?must be set}
       DOCS_ENABLED: "false"
+      REGISTRATION_ENABLED: "false"
 
   worker:
     environment:

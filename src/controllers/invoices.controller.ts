@@ -16,6 +16,7 @@ import { createInvoiceBodySchema } from "@/schemas/invoices.schema";
 import { createInvoice, type IntakeDeps } from "@/services/invoiceIntake.service";
 import { transition } from "@/services/invoiceStatus.service";
 import type { BillingSnapshotCompany } from "@/types/invoice.types";
+import type { InvoiceRow } from "@/repositories/invoices.repository";
 import { AppError } from "@/utils/AppError";
 import { getClientIp } from "@/utils/getClientIp";
 import { logger } from "@/utils/logger";
@@ -38,6 +39,19 @@ const intakeDeps: IntakeDeps = {
   logger,
 };
 
+function requireUser(req: Request): NonNullable<Request["user"]> {
+  if (!req.user) {
+    throw AppError.unauthorized("Authentication required", "NOT_AUTHENTICATED");
+  }
+  return req.user;
+}
+
+function assertCanAccess(invoice: InvoiceRow, user: NonNullable<Request["user"]>): void {
+  if (user.role !== "admin" && invoice.createdBy !== user.id) {
+    throw AppError.notFound(`Invoice ${invoice.id} not found`, "INVOICE_NOT_FOUND");
+  }
+}
+
 function getHeader(req: Request, name: string): string | undefined {
   const value = req.headers[name];
   const first = Array.isArray(value) ? value[0] : value;
@@ -45,11 +59,13 @@ function getHeader(req: Request, name: string): string | undefined {
 }
 
 export async function createInvoiceHandler(req: Request, res: Response): Promise<void> {
+  const user = requireUser(req);
   const body = createInvoiceBodySchema.parse(req.body);
   const idempotencyKey = getHeader(req, IDEMPOTENCY_KEY_HEADER);
 
   const result = await createInvoice(
     {
+      userId: user.id,
       email: body.email,
       currency: body.currency,
       items: body.items,
@@ -85,6 +101,7 @@ function formatCompanyAddress(company: BillingSnapshotCompany): string {
 }
 
 export async function getInvoiceHandler(req: Request, res: Response): Promise<void> {
+  const user = requireUser(req);
   const { id } = invoiceIdParamsSchema.parse(req.params);
 
   const invoice = await findInvoiceById(db, id);
@@ -92,6 +109,7 @@ export async function getInvoiceHandler(req: Request, res: Response): Promise<vo
   if (!invoice) {
     throw AppError.notFound(`Invoice ${id} not found`, "INVOICE_NOT_FOUND");
   }
+  assertCanAccess(invoice, user);
 
   const items = await listInvoiceItems(db, invoice.id);
   const { client } = invoice.billingSnapshot;
@@ -124,6 +142,7 @@ export async function getInvoiceHandler(req: Request, res: Response): Promise<vo
 }
 
 export async function getInvoicePdfHandler(req: Request, res: Response): Promise<void> {
+  const user = requireUser(req);
   const { id } = invoiceIdParamsSchema.parse(req.params);
 
   const invoice = await findInvoiceById(db, id);
@@ -131,6 +150,7 @@ export async function getInvoicePdfHandler(req: Request, res: Response): Promise
   if (!invoice) {
     throw AppError.notFound(`Invoice ${id} not found`, "INVOICE_NOT_FOUND");
   }
+  assertCanAccess(invoice, user);
 
   const document = await findInvoiceDocument(db, id);
 
@@ -146,6 +166,7 @@ export async function getInvoicePdfHandler(req: Request, res: Response): Promise
 }
 
 export async function retryInvoiceHandler(req: Request, res: Response): Promise<void> {
+  const user = requireUser(req);
   const { id } = invoiceIdParamsSchema.parse(req.params);
 
   const invoice = await findInvoiceById(db, id);
@@ -156,7 +177,16 @@ export async function retryInvoiceHandler(req: Request, res: Response): Promise<
 
   let updated;
   try {
-    updated = await transition(db, { logger }, id, ["FAILED"], "PENDING", { lastError: null });
+    updated = await transition(
+      db,
+      { logger },
+      id,
+      ["FAILED"],
+      "PENDING",
+      { lastError: null },
+      { actorUserId: user.id },
+    );
+    logger.info("Invoice retry requested", { invoiceId: id, userId: user.id });
   } catch (err) {
     if (err instanceof AppError && err.statusCode === StatusCodes.CONFLICT) {
       throw AppError.conflict(`Invoice ${id} is not in a retryable state`, "INVOICE_NOT_RETRYABLE");

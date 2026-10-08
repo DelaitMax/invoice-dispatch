@@ -52,4 +52,30 @@ describe("loadEnv", () => {
 
     await expect(import("@/config/env")).rejects.toThrow(/Invalid environment variables/);
   });
+
+  it.each([
+    ["production", undefined, false],
+    ["development", undefined, true],
+    ["test", undefined, true],
+    ["production", "true", true],
+    ["development", "false", false],
+  ])("REGISTRATION_ENABLED in NODE_ENV=%s with %s resolves to %s", async (nodeEnv, explicit, expected) => {
+    process.env["NODE_ENV"] = nodeEnv;
+    if (explicit === undefined) {
+      delete process.env["REGISTRATION_ENABLED"];
+    } else {
+      process.env["REGISTRATION_ENABLED"] = explicit;
+    }
+
+    const { env } = await import("@/config/env");
+
+    expect(env.REGISTRATION_ENABLED).toBe(expected);
+  });
+
+  it("rejects QUEUE_LEASE_MS that does not outlast PDF_TIMEOUT_MS (a render must never outlive its lease)", async () => {
+    process.env["PDF_TIMEOUT_MS"] = "20000";
+    process.env["QUEUE_LEASE_MS"] = "20000";
+
+    await expect(import("@/config/env")).rejects.toThrow(/QUEUE_LEASE_MS/);
+  });
 });

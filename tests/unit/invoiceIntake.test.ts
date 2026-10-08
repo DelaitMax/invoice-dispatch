@@ -24,6 +24,7 @@ function fakeLogger(): Logger {
 
 function baseInput(overrides: Partial<CreateInvoiceInput> = {}): CreateInvoiceInput {
   return {
+    userId: "77777777-7777-4777-8777-777777777777",
     email: CLIENT.email,
     currency: "USD",
     items: [{ description: "Consulting", quantity: 2, unitAmountMinor: 5000 }],

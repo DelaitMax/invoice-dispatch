@@ -38,6 +38,23 @@ export const createInvoiceRateLimiter = rateLimit({
   }),
 });
 
+export const createInvoiceUserRateLimiter = rateLimit({
+  windowMs: env.USER_INVOICE_RATE_LIMIT_WINDOW_MS,
+  limit: env.USER_INVOICE_RATE_LIMIT_MAX,
+  standardHeaders: true,
+  legacyHeaders: false,
+  passOnStoreError: true,
+  statusCode: StatusCodes.TOO_MANY_REQUESTS,
+  keyGenerator: (req) => req.user?.id ?? req.ip ?? "unknown",
+  message: {
+    error: { message: "Invoice quota for this account exceeded, please try again later", code: "USER_RATE_LIMITED" },
+  },
+  store: new RedisStore({
+    prefix: "rl:invoices-user:",
+    sendCommand,
+  }),
+});
+
 export const authRateLimiter = rateLimit({
   windowMs: env.RATE_LIMIT_WINDOW_MS,
   limit: env.AUTH_RATE_LIMIT_MAX,

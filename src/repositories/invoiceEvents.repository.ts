@@ -10,6 +10,7 @@ export interface NewInvoiceEventInput {
   readonly fromStatus: InvoiceStatus | null;
   readonly toStatus: InvoiceStatus;
   readonly detail?: Record<string, unknown>;
+  readonly userId?: string;
 }
 
 export async function insertInvoiceEvent(db: Database, input: NewInvoiceEventInput): Promise<void> {

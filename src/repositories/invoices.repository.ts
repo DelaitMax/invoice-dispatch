@@ -20,6 +20,7 @@ export type NewInvoiceInput = Pick<
   | "dueAt"
   | "idempotencyKey"
   | "requestHash"
+  | "createdBy"
 >;
 
 export async function insertInvoice(db: Database, data: NewInvoiceInput): Promise<InvoiceRow> {

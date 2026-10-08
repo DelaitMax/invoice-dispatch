@@ -32,6 +32,7 @@ const commonEnvSchema = z.object({
 
   API_KEY: z.string().min(1).optional(),
   DOCS_ENABLED: optionalBooleanString,
+  REGISTRATION_ENABLED: optionalBooleanString,
 
   JWT_SECRET: z.string().min(32, "JWT_SECRET must be at least 32 characters"),
   JWT_COOKIE_NAME: z.string().min(1).default("auth_token"),
@@ -73,6 +74,8 @@ const commonEnvSchema = z.object({
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(30),
   AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
+  USER_INVOICE_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(3_600_000),
+  USER_INVOICE_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(60),
   SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
 });
 
@@ -94,9 +97,11 @@ const mailDriverSchema = z
     commonEnvSchema.merge(consoleDriverSchema),
   ])
   .transform((data) => {
-    const { DOCS_ENABLED, ...rest } = data;
-    const docsEnabled = DOCS_ENABLED !== undefined ? DOCS_ENABLED === "true" : rest.NODE_ENV !== "production";
-    return { ...rest, DOCS_ENABLED: docsEnabled };
+    const { DOCS_ENABLED, REGISTRATION_ENABLED, ...rest } = data;
+    const notProduction = rest.NODE_ENV !== "production";
+    const docsEnabled = DOCS_ENABLED !== undefined ? DOCS_ENABLED === "true" : notProduction;
+    const registrationEnabled = REGISTRATION_ENABLED !== undefined ? REGISTRATION_ENABLED === "true" : notProduction;
+    return { ...rest, DOCS_ENABLED: docsEnabled, REGISTRATION_ENABLED: registrationEnabled };
   });
 
 export type Env = z.infer<typeof mailDriverSchema>;

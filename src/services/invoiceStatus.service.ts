@@ -15,6 +15,10 @@ export interface TransitionDeps {
   readonly logger: Logger;
 }
 
+export interface ClaimOptions extends UpdateInvoiceStatusOptions {
+  readonly actorUserId?: string;
+}
+
 export interface StatusService {
   readonly claim: typeof claim;
   readonly transition: typeof transition;
@@ -27,10 +31,12 @@ export async function claim(
   from: readonly InvoiceStatus[],
   to: InvoiceStatus,
   patch: InvoiceStatusPatch = {},
-  options: UpdateInvoiceStatusOptions = {},
+  options: ClaimOptions = {},
 ): Promise<InvoiceRow | null> {
+  const { actorUserId, ...updateOptions } = options;
+
   return db.transaction(async (tx) => {
-    const updated = await updateInvoiceStatus(tx, invoiceId, from, to, patch, options);
+    const updated = await updateInvoiceStatus(tx, invoiceId, from, to, patch, updateOptions);
 
     if (!updated) {
       const current = await findInvoiceById(tx, invoiceId);
@@ -47,6 +53,7 @@ export async function claim(
       invoiceId,
       fromStatus: from.length === 1 ? (from[0] ?? null) : null,
       toStatus: to,
+      ...(actorUserId ? { userId: actorUserId } : {}),
       ...(patch.lastError ? { detail: { lastError: patch.lastError } } : {}),
     });
 
@@ -63,7 +70,7 @@ export async function transition(
   from: readonly InvoiceStatus[],
   to: InvoiceStatus,
   patch: InvoiceStatusPatch = {},
-  options: UpdateInvoiceStatusOptions = {},
+  options: ClaimOptions = {},
 ): Promise<InvoiceRow> {
   const updated = await claim(db, deps, invoiceId, from, to, patch, options);
 

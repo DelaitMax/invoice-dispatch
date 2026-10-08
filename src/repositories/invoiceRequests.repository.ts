@@ -7,7 +7,7 @@ type NewInvoiceRequest = typeof invoiceRequests.$inferInsert;
 
 export type NewInvoiceRequestInput = Pick<
   NewInvoiceRequest,
-  "recipientEmail" | "rawBody" | "idempotencyKey" | "clientIp" | "userAgent" | "requestId"
+  "recipientEmail" | "rawBody" | "idempotencyKey" | "clientIp" | "userAgent" | "requestId" | "userId"
 >;
 
 export async function insertInvoiceRequest(db: Database, data: NewInvoiceRequestInput): Promise<InvoiceRequestRow> {

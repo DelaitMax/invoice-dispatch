@@ -187,6 +187,8 @@ Copy `.env.example` to `.env` and adjust. Every variable is validated at startup
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD`                                                         | no, but together-or-neither   | —                                            | One-time admin bootstrap, read by `pnpm db:seed`                                                           |
 | `AUTH_RATE_LIMIT_MAX`                                                                    | no                            | `10`                                         | `POST /auth/register` and `/auth/login`, tighter than `RATE_LIMIT_MAX` on purpose                          |
 | `DOCS_ENABLED`                                                                           | no                            | `true` outside production, `false` in it     | Swagger UI + `/docs/openapi.json`                                                                          |
+| `REGISTRATION_ENABLED`                                                                   | no                            | `true` outside production, `false` in it     | Open self-service `POST /auth/register`. Closed in production: accounts are created by the operator        |
+| `USER_INVOICE_RATE_LIMIT_MAX` / `USER_INVOICE_RATE_LIMIT_WINDOW_MS`                      | no                            | `60` / `3600000`                             | Per-**account** invoice-creation quota, on top of the per-IP `RATE_LIMIT_*`                                |
 | `MAIL_DRIVER`                                                                            | **yes**                       | —                                            | `mailgun` \| `console` — no default, no silent fallback                                                    |
 | `MAILGUN_API_KEY` / `MAILGUN_DOMAIN`                                                     | only if `MAIL_DRIVER=mailgun` | —                                            |                                                                                                            |
 | `MAILGUN_BASE_URL`                                                                       | no                            | `https://api.mailgun.net`                    | EU accounts: `https://api.eu.mailgun.net`                                                                  |
@@ -327,6 +329,18 @@ delivery is unknown and where to check (Mailgun events for `v:invoice-id`). The 
 tests that matter: `pipeline.retry.test.ts` (real BullMQ + Postgres + Redis + the real
 `mailgun.js` client against a local stub: 503, then OK → `SENT` after exactly 2 calls),
 `invoices.lease.test.ts` and `invoices.leaseMonitor.test.ts`.
+
+## Who can see and send what
+
+An invoice belongs to the account that created it (`invoices.created_by`); only that account and
+admins can read it or download its PDF — anyone else gets the same 404 as for a missing id, so ids
+can't be probed. Every request is attributed: `invoice_requests.user_id`, `invoice_events.user_id`
+(the creator at intake, the admin who pressed retry; empty for worker/monitor transitions).
+Idempotency keys are private to the account that sent them. Creation is rate-limited per IP **and**
+per account. In production `POST /auth/register` is closed (`REGISTRATION_ENABLED`), so the only
+way to get a session is an account the operator created. `API_KEY` is deliberately not mandatory in
+`docker-compose.prod.yml`: the browser frontend can't keep a shared secret, so it was never real
+protection there.
 
 ## Engineering principles
 

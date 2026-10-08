@@ -39,6 +39,7 @@ describe("createInvoice — unknown client", () => {
     await expect(
       createInvoice(
         {
+          userId: "77777777-7777-4777-8777-777777777777",
           email: "nobody@example.com",
           currency: "USD",
           items: [{ description: "x", quantity: 1, unitAmountMinor: 100 }],
@@ -57,6 +58,7 @@ describe("createInvoice — unknown client", () => {
     await expect(
       createInvoice(
         {
+          userId: "77777777-7777-4777-8777-777777777777",
           email: "nobody@example.com",
           currency: "USD",
           items: [{ description: "x", quantity: 1, unitAmountMinor: 100 }],

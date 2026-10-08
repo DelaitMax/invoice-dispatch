@@ -28,6 +28,7 @@ export interface CreateInvoiceAudit {
 }
 
 export interface CreateInvoiceInput {
+  readonly userId: string;
   readonly email: string;
   readonly currency: string;
   readonly notes?: string;
@@ -144,7 +145,12 @@ function toResult(invoice: InvoiceRow, duplicate: boolean): CreateInvoiceResult 
   };
 }
 
-export async function createInvoice(input: CreateInvoiceInput, deps: IntakeDeps): Promise<CreateInvoiceResult> {
+function scopeIdempotencyKey(userId: string, key: string | undefined): string | undefined {
+  return key === undefined ? undefined : `${userId}:${key}`;
+}
+
+export async function createInvoice(rawInput: CreateInvoiceInput, deps: IntakeDeps): Promise<CreateInvoiceResult> {
+  const input = { ...rawInput, idempotencyKey: scopeIdempotencyKey(rawInput.userId, rawInput.idempotencyKey) };
   const requestHash = computeRequestHash(input);
 
   const requestRow = await deps.requests.insert(deps.db, {
@@ -154,6 +160,7 @@ export async function createInvoice(input: CreateInvoiceInput, deps: IntakeDeps)
     clientIp: input.audit.ip,
     userAgent: input.audit.userAgent,
     requestId: input.audit.requestId,
+    userId: input.userId,
   });
 
   if (input.idempotencyKey) {
@@ -166,12 +173,13 @@ export async function createInvoice(input: CreateInvoiceInput, deps: IntakeDeps)
         deps.logger.info("Idempotent replay of invoice creation", {
           invoiceId: existing.id,
           requestId: input.audit.requestId,
+          userId: input.userId,
         });
         return toResult(existing, true);
       }
 
       throw AppError.conflict(
-        `Idempotency-Key "${input.idempotencyKey}" was already used with a different request body`,
+        `Idempotency-Key "${rawInput.idempotencyKey}" was already used with a different request body`,
         "IDEMPOTENCY_KEY_CONFLICT",
       );
     }
@@ -203,6 +211,7 @@ export async function createInvoice(input: CreateInvoiceInput, deps: IntakeDeps)
       notes: input.notes ?? null,
       issuedAt,
       dueAt,
+      createdBy: input.userId,
       idempotencyKey: input.idempotencyKey ?? null,
       requestHash,
     });
@@ -219,7 +228,12 @@ export async function createInvoice(input: CreateInvoiceInput, deps: IntakeDeps)
       })),
     );
 
-    await deps.invoiceEvents.insert(tx, { invoiceId: insertedInvoice.id, fromStatus: null, toStatus: "PENDING" });
+    await deps.invoiceEvents.insert(tx, {
+      invoiceId: insertedInvoice.id,
+      fromStatus: null,
+      toStatus: "PENDING",
+      userId: input.userId,
+    });
 
     return insertedInvoice;
   });
@@ -230,6 +244,7 @@ export async function createInvoice(input: CreateInvoiceInput, deps: IntakeDeps)
     invoiceId: invoice.id,
     invoiceNumber: invoice.invoiceNumber,
     requestId: input.audit.requestId,
+    userId: input.userId,
   });
 
   try {
