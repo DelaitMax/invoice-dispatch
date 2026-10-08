@@ -252,7 +252,7 @@ export interface paths {
                         };
                     };
                 };
-                /** @description Too many requests (RATE_LIMITED) */
+                /** @description Per-IP limit (RATE_LIMITED) or this account's invoice quota (USER_RATE_LIMITED) */
                 429: {
                     headers: {
                         [name: string]: unknown;
@@ -374,7 +374,7 @@ export interface paths {
                         };
                     };
                 };
-                /** @description Invoice not found (INVOICE_NOT_FOUND) */
+                /** @description Invoice not found, or not yours — only the creator and admins can read an invoice (INVOICE_NOT_FOUND) */
                 404: {
                     headers: {
                         [name: string]: unknown;
@@ -463,7 +463,7 @@ export interface paths {
                         };
                     };
                 };
-                /** @description Invoice not found (INVOICE_NOT_FOUND) */
+                /** @description Invoice not found, or not yours — only the creator and admins can read an invoice (INVOICE_NOT_FOUND) */
                 404: {
                     headers: {
                         [name: string]: unknown;
@@ -593,7 +593,7 @@ export interface paths {
                         };
                     };
                 };
-                /** @description Invoice not found (INVOICE_NOT_FOUND) */
+                /** @description Invoice not found, or not yours — only the creator and admins can read an invoice (INVOICE_NOT_FOUND) */
                 404: {
                     headers: {
                         [name: string]: unknown;
@@ -680,6 +680,23 @@ export interface paths {
                 };
                 /** @description Validation failed, or the email is already registered (VALIDATION_ERROR, EMAIL_TAKEN) */
                 400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            error: {
+                                message: string;
+                                code?: string;
+                                details?: {
+                                    [key: string]: string[];
+                                };
+                            };
+                        };
+                    };
+                };
+                /** @description Registration is closed on this deployment — the default in production (REGISTRATION_DISABLED) */
+                403: {
                     headers: {
                         [name: string]: unknown;
                     };
