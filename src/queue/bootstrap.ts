@@ -55,6 +55,7 @@ export async function startWorkers(deps: BootstrapWorkersDeps): Promise<WorkerHa
     emailQueue,
     maxBytes: env.PDF_MAX_BYTES,
     timeoutMs: env.PDF_TIMEOUT_MS,
+    leaseMs: env.QUEUE_LEASE_MS,
     logger: deps.logger,
   });
 
@@ -65,7 +66,7 @@ export async function startWorkers(deps: BootstrapWorkersDeps): Promise<WorkerHa
     status: deps.status,
     mailer: deps.mailer,
     sender: deps.sender,
-    staleAfterMs: env.QUEUE_STUCK_TIMEOUT_MS,
+    leaseMs: env.QUEUE_LEASE_MS,
     logger: deps.logger,
   });
 
@@ -73,6 +74,7 @@ export async function startWorkers(deps: BootstrapWorkersDeps): Promise<WorkerHa
     {
       db: deps.db,
       invoices: deps.invoices,
+      status: deps.status,
       pdfQueue,
       emailQueue,
       stuckTimeoutMs: env.QUEUE_STUCK_TIMEOUT_MS,

@@ -9,7 +9,8 @@ function fakeLogger(): Logger {
 function buildDeps(overrides: Partial<SweeperDeps> = {}): SweeperDeps {
   return {
     db: {} as never,
-    invoices: { findStuck: vi.fn(async () => []) },
+    invoices: { findStuck: vi.fn(async () => []), findExpiredLeases: vi.fn(async () => []) },
+    status: { claim: vi.fn(async () => null) },
     pdfQueue: { add: vi.fn(async () => undefined as never) },
     emailQueue: { add: vi.fn(async () => undefined as never) },
     stuckTimeoutMs: 120_000,
@@ -25,7 +26,7 @@ beforeEach(() => {
 describe("sweepStuckInvoices", () => {
   it("queries for stuck PENDING/PDF_READY invoices only — PDF_RENDERING/EMAIL_SENDING are a live worker's job, not the sweeper's", async () => {
     const findStuck = vi.fn(async () => []);
-    const deps = buildDeps({ invoices: { findStuck } });
+    const deps = buildDeps({ invoices: { findStuck, findExpiredLeases: vi.fn(async () => []) } });
 
     await sweepStuckInvoices(deps);
 
@@ -34,7 +35,9 @@ describe("sweepStuckInvoices", () => {
 
   it("re-enqueues a stuck PENDING invoice onto the PDF queue, not the email queue", async () => {
     const invoice = { id: "11111111-1111-4111-8111-111111111111", status: "PENDING" as const };
-    const deps = buildDeps({ invoices: { findStuck: vi.fn(async () => [invoice] as never) } });
+    const deps = buildDeps({
+      invoices: { findStuck: vi.fn(async () => [invoice] as never), findExpiredLeases: vi.fn(async () => []) },
+    });
 
     const count = await sweepStuckInvoices(deps);
 
@@ -45,7 +48,9 @@ describe("sweepStuckInvoices", () => {
 
   it("re-enqueues a stuck PDF_READY invoice onto the email queue, not the PDF queue", async () => {
     const invoice = { id: "22222222-2222-4222-8222-222222222222", status: "PDF_READY" as const };
-    const deps = buildDeps({ invoices: { findStuck: vi.fn(async () => [invoice] as never) } });
+    const deps = buildDeps({
+      invoices: { findStuck: vi.fn(async () => [invoice] as never), findExpiredLeases: vi.fn(async () => []) },
+    });
 
     const count = await sweepStuckInvoices(deps);
 
@@ -63,7 +68,7 @@ describe("sweepStuckInvoices", () => {
     const ok = { id: "44444444-4444-4444-8444-444444444444", status: "PDF_READY" as const };
     const logger = fakeLogger();
     const deps = buildDeps({
-      invoices: { findStuck: vi.fn(async () => [failing, ok] as never) },
+      invoices: { findStuck: vi.fn(async () => [failing, ok] as never), findExpiredLeases: vi.fn(async () => []) },
       pdfQueue: { add: vi.fn(async () => Promise.reject(new Error("redis unavailable"))) },
       logger,
     });

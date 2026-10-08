@@ -149,3 +149,15 @@ CREATE TABLE "users" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "users_email_unique" UNIQUE("email")
 );
+
+ALTER TABLE "invoices" ADD COLUMN "claim_token" text;
+
+ALTER TABLE "invoices" ADD COLUMN "lease_until" timestamp with time zone;
+
+CREATE INDEX "invoices_lease_until_idx" ON "invoices" USING btree ("lease_until") WHERE "invoices"."lease_until" is not null;
+
+-- Invoices already sitting in an in-flight status at deploy time have no lease. Give them one
+-- anchored at their last update: the ones the old stale-claim bug left stuck forever have long
+-- expired leases, so the lease monitor surfaces them as FAILED (with an explicit note for
+-- EMAIL_SENDING) instead of leaving them invisible; ones genuinely in flight are left alone.
+UPDATE "invoices" SET "lease_until" = "updated_at" + interval '120 seconds' WHERE "status" IN ('PDF_RENDERING', 'EMAIL_SENDING') AND "lease_until" IS NULL;

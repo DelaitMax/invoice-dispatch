@@ -54,7 +54,7 @@ describe("claim", () => {
     );
   });
 
-  it("passes from/to through unchanged for a self-transition request (staleness gating happens in the repository, not here)", async () => {
+  it("passes from/to through unchanged for a self-transition request (ownership is decided in the repository, not here)", async () => {
     const updatedRow = { id: INVOICE_ID, status: "EMAIL_SENDING" };
     updateInvoiceStatusMock.mockResolvedValue(updatedRow);
 
@@ -77,9 +77,9 @@ describe("claim", () => {
     );
   });
 
-  it("forwards a staleBefore option through to the repository call", async () => {
+  it("forwards claimToken / leaseMs through to the repository call", async () => {
     updateInvoiceStatusMock.mockResolvedValue({ id: INVOICE_ID, status: "EMAIL_SENDING" });
-    const staleBefore = new Date("2026-01-01T00:00:00.000Z");
+    const options = { claimToken: "email-abc", leaseMs: 120_000 };
 
     await claim(
       fakeDb(),
@@ -88,7 +88,7 @@ describe("claim", () => {
       ["PDF_READY", "EMAIL_SENDING"],
       "EMAIL_SENDING",
       {},
-      { staleBefore },
+      options,
     );
 
     expect(updateInvoiceStatusMock).toHaveBeenCalledWith(
@@ -97,7 +97,7 @@ describe("claim", () => {
       ["PDF_READY", "EMAIL_SENDING"],
       "EMAIL_SENDING",
       {},
-      { staleBefore },
+      options,
     );
   });
 

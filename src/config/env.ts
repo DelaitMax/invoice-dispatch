@@ -66,6 +66,7 @@ const commonEnvSchema = z.object({
   QUEUE_BACKOFF_DELAY_MS: z.coerce.number().int().positive().default(3_000),
   QUEUE_STUCK_SWEEP_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
   QUEUE_STUCK_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
+  QUEUE_LEASE_MS: z.coerce.number().int().positive().default(120_000),
   EMAIL_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(50),
   EMAIL_RATE_LIMIT_DURATION_MS: z.coerce.number().int().positive().default(60_000),
 
@@ -111,6 +112,12 @@ function loadEnv(): Env {
 
   if (Boolean(parsed.data.ADMIN_EMAIL) !== Boolean(parsed.data.ADMIN_PASSWORD)) {
     const message = "ADMIN_EMAIL and ADMIN_PASSWORD must be set together, or not at all";
+    console.error(message);
+    throw new Error(message);
+  }
+
+  if (parsed.data.QUEUE_LEASE_MS <= parsed.data.PDF_TIMEOUT_MS) {
+    const message = `QUEUE_LEASE_MS (${parsed.data.QUEUE_LEASE_MS}) must be greater than PDF_TIMEOUT_MS (${parsed.data.PDF_TIMEOUT_MS}): a render must never outlive its own lease`;
     console.error(message);
     throw new Error(message);
   }

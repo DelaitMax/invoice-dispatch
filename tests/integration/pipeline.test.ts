@@ -9,7 +9,7 @@ import { emailQueue } from "@/queue/emailQueue";
 import { startWorkers, stopWorkers, type WorkerHandles } from "@/queue/bootstrap";
 import { pdfQueue } from "@/queue/pdfQueue";
 import { findInvoiceDocument, upsertInvoiceDocument } from "@/repositories/invoiceDocuments.repository";
-import { findInvoiceById, findStuckInvoices } from "@/repositories/invoices.repository";
+import { findExpiredLeases, findInvoiceById, findStuckInvoices } from "@/repositories/invoices.repository";
 import { listInvoiceItems } from "@/repositories/invoiceItems.repository";
 import { transition, claim } from "@/services/invoiceStatus.service";
 import { logger } from "@/utils/logger";
@@ -34,7 +34,7 @@ beforeAll(async () => {
   authCookie = await loginAsUser(app);
   handles = await startWorkers({
     db,
-    invoices: { findById: findInvoiceById, findStuck: findStuckInvoices },
+    invoices: { findById: findInvoiceById, findStuck: findStuckInvoices, findExpiredLeases },
     items: { list: listInvoiceItems },
     documents: { upsert: upsertInvoiceDocument, findByInvoiceId: findInvoiceDocument },
     status: { claim, transition },

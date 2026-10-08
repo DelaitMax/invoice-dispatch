@@ -1,5 +1,6 @@
 import { UnrecoverableError } from "bullmq";
 import { describe, expect, it, vi } from "vitest";
+import { ClaimLostError } from "@/services/claimLost.error";
 import { sendInvoiceEmail, type EmailDeps } from "@/services/invoiceEmail.service";
 import type { Logger } from "@/utils/logger";
 
@@ -38,20 +39,67 @@ function buildDeps(overrides: Partial<EmailDeps> = {}): EmailDeps {
       phone: undefined,
       address: { line1: "1 St", line2: undefined, city: "City", postalCode: undefined, country: undefined },
     },
-    staleAfterMs: 120_000,
+    leaseMs: 120_000,
     logger: fakeLogger(),
     ...overrides,
   };
 }
 
 describe("sendInvoiceEmail", () => {
-  it("never calls mailer.send when claim returns null (lost the race to another attempt)", async () => {
-    const deps = buildDeps({ status: { claim: vi.fn(async () => null), transition: vi.fn() } });
+  it("never calls mailer.send when claim returns null, and fails the attempt instead of silently completing the job", async () => {
+    const inFlight = { ...INVOICE, status: "EMAIL_SENDING" };
+    const deps = buildDeps({
+      invoices: { findById: vi.fn(async () => inFlight as never) },
+      status: { claim: vi.fn(async () => null), transition: vi.fn() },
+    });
 
-    await sendInvoiceEmail(INVOICE_ID, false, deps);
+    await expect(sendInvoiceEmail(INVOICE_ID, false, deps)).rejects.toBeInstanceOf(ClaimLostError);
 
     expect(deps.mailer.send).not.toHaveBeenCalled();
     expect(deps.status.transition).not.toHaveBeenCalled();
+  });
+
+  it.each(["SENT", "FAILED"])(
+    "a lost claim on an invoice that is already %s finishes without sending",
+    async (status) => {
+      const deps = buildDeps({
+        invoices: { findById: vi.fn(async () => ({ ...INVOICE, status }) as never) },
+        status: { claim: vi.fn(async () => null), transition: vi.fn() },
+      });
+
+      await expect(sendInvoiceEmail(INVOICE_ID, false, deps)).resolves.toBeUndefined();
+
+      expect(deps.mailer.send).not.toHaveBeenCalled();
+    },
+  );
+
+  it("claims with the executor's token and the configured lease", async () => {
+    const deps = buildDeps({ leaseMs: 90_000 });
+
+    await sendInvoiceEmail(INVOICE_ID, false, deps, "email-abc");
+
+    expect(deps.status.claim).toHaveBeenCalledWith(
+      deps.db,
+      deps,
+      INVOICE_ID,
+      ["PDF_READY", "EMAIL_SENDING"],
+      "EMAIL_SENDING",
+      {},
+      { claimToken: "email-abc", leaseMs: 90_000 },
+    );
+  });
+
+  it("does not retry the send when the mail went out but recording SENT failed", async () => {
+    const deps = buildDeps();
+    vi.mocked(deps.status.transition).mockRejectedValueOnce(new Error("db down"));
+
+    await expect(sendInvoiceEmail(INVOICE_ID, false, deps)).rejects.toBeInstanceOf(UnrecoverableError);
+
+    expect(deps.mailer.send).toHaveBeenCalledTimes(1);
+    expect(deps.logger.error).toHaveBeenCalledWith(
+      expect.stringContaining("SENT could not be recorded"),
+      expect.objectContaining({ providerMessageId: "msg-1" }),
+    );
   });
 
   it("sends the mail and transitions to SENT on success", async () => {
@@ -72,6 +120,7 @@ describe("sendInvoiceEmail", () => {
       ["EMAIL_SENDING"],
       "SENT",
       expect.objectContaining({ providerMessageId: "msg-1" }),
+      { claimToken: expect.any(String) },
     );
   });
 
@@ -88,16 +137,26 @@ describe("sendInvoiceEmail", () => {
       ["EMAIL_SENDING"],
       "FAILED",
       expect.objectContaining({ lastError: expect.stringContaining("bad address") }),
+      { claimToken: expect.any(String) },
     );
   });
 
-  it("does NOT mark FAILED for a temporary error on a non-final attempt (status must not flicker before retries are exhausted)", async () => {
+  it("does NOT mark FAILED for a temporary error on a non-final attempt — it hands the claim back to PDF_READY", async () => {
     const temporaryError = Object.assign(new Error("timeout"), { status: 500 });
     const deps = buildDeps({ mailer: { send: vi.fn(async () => Promise.reject(temporaryError)) } });
 
     await expect(sendInvoiceEmail(INVOICE_ID, false, deps)).rejects.toThrow("timeout");
 
-    expect(deps.status.transition).not.toHaveBeenCalled();
+    expect(deps.status.transition).toHaveBeenCalledTimes(1);
+    expect(deps.status.transition).toHaveBeenCalledWith(
+      deps.db,
+      deps,
+      INVOICE_ID,
+      ["EMAIL_SENDING"],
+      "PDF_READY",
+      { lastError: "timeout" },
+      { claimToken: expect.any(String) },
+    );
   });
 
   it("marks FAILED for a temporary error once it is the final attempt", async () => {
@@ -113,6 +172,7 @@ describe("sendInvoiceEmail", () => {
       ["EMAIL_SENDING"],
       "FAILED",
       expect.objectContaining({ lastError: expect.stringContaining("timeout") }),
+      { claimToken: expect.any(String) },
     );
   });
 

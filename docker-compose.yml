@@ -24,6 +24,7 @@ services:
   api:
     build: .
     command: sh -c "node dist/db/migrate.js && node dist/index.js"
+    stop_grace_period: 20s
     env_file: .env
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-invoice_dispatch}
@@ -49,6 +50,7 @@ services:
   worker:
     build: .
     command: node dist/worker.js
+    stop_grace_period: 20s
     env_file: .env
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-invoice_dispatch}

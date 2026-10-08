@@ -2,6 +2,12 @@ export const INVOICE_STATUSES = ["PENDING", "PDF_RENDERING", "PDF_READY", "EMAIL
 
 export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
 
+export const IN_FLIGHT_STATUSES = ["PDF_RENDERING", "EMAIL_SENDING"] as const satisfies readonly InvoiceStatus[];
+
+export function isInFlightStatus(status: InvoiceStatus): boolean {
+  return (IN_FLIGHT_STATUSES as readonly InvoiceStatus[]).includes(status);
+}
+
 export interface BillingSnapshotCompany {
   readonly name: string;
   readonly addressLine1: string;

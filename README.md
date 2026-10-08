@@ -201,6 +201,7 @@ Copy `.env.example` to `.env` and adjust. Every variable is validated at startup
 | `QUEUE_PDF_CONCURRENCY` / `QUEUE_EMAIL_CONCURRENCY`                                      | no                            | `2` / `5`                                    |                                                                                                            |
 | `QUEUE_JOB_ATTEMPTS` / `QUEUE_BACKOFF_DELAY_MS`                                          | no                            | `3` / `3000`                                 | Exponential backoff                                                                                        |
 | `QUEUE_STUCK_SWEEP_INTERVAL_MS` / `QUEUE_STUCK_TIMEOUT_MS`                               | no                            | `60000` / `120000`                           | Sweeper cadence / staleness threshold                                                                      |
+| `QUEUE_LEASE_MS`                                                                         | no                            | `120000`                                     | How long a worker's claim on an in-flight invoice is honoured for others; must exceed `PDF_TIMEOUT_MS`     |
 | `EMAIL_RATE_LIMIT_MAX` / `EMAIL_RATE_LIMIT_DURATION_MS`                                  | no                            | `50` / `60000`                               | Throttles the email worker against the provider's quota                                                    |
 | `RATE_LIMIT_WINDOW_MS` / `RATE_LIMIT_MAX`                                                | no                            | `60000` / `30`                               | `POST /api/invoices`, Redis-backed, fails open with a `warn` log if Redis is down                          |
 | `SHUTDOWN_TIMEOUT_MS`                                                                    | no                            | `15000`                                      | Force-exit timeout for graceful shutdown                                                                   |
@@ -306,16 +307,26 @@ Summary of the key decisions:
   deliberately — see below), a second pass at the same invoice must still be safe, because the
   database-level guard is what actually prevents a duplicate.
 
-**A note on the duplicate-email test, because it's worth being honest about:** getting this
-right took two attempts. The first design let a status be listed as its own valid `from` state
-(needed so a legitimate sequential BullMQ retry can re-enter `EMAIL_SENDING` after a previous
-attempt failed partway through) — but that same rule also let two genuinely _concurrent_ calls
-both match the same `UPDATE ... WHERE status = ANY(from)` and both "win", since neither call
-cares who set the current status. `tests/integration/pipeline.duplicate.test.ts` caught this
-intermittently. The fix (`updateInvoiceStatus`'s `staleBefore` option) makes the self-transition
-branch of that `WHERE` clause additionally require `updated_at < staleBefore`: a row updated a
-moment ago (by the other live concurrent caller) fails that check, while a row that's genuinely
-been sitting stuck long enough passes it. Re-run 20+ times after the fix with zero failures.
+**A note on the duplicate-email test, because it's worth being honest about:** this took two
+designs, and the first one was wrong in a way the tests could not see. The original rule let a
+status be its own valid `from` state (so a BullMQ retry can re-enter `EMAIL_SENDING`) and
+guarded it with the row's age (`updated_at < now - 120s`) to keep two _concurrent_ calls out.
+That fixed the duplicate — and silently broke every retry: BullMQ backs off for 3–6 s, the
+window was minutes, so each retry lost its claim, logged a warning, returned without throwing,
+and BullMQ deleted the "successful" job. The invoice stayed in `EMAIL_SENDING` forever. The
+tests were green because the unit tests mocked the claim and the integration test only ran the
+concurrent scenario the fix was written for.
+
+The claim now belongs to an _executor_, not to a row's age: `invoices.claim_token` (the BullMQ
+job id) and `invoices.lease_until`. The same job's retry or crash-restart re-takes its own claim
+at once; any other executor is refused until the lease expires. A transient failure hands the
+claim back (`EMAIL_SENDING → PDF_READY`, `PDF_RENDERING → PENDING`); a worker that loses a claim
+**throws** instead of returning (a returned job is a deleted job); and the lease monitor in the
+sweeper fails in-flight invoices whose lease expired — for `EMAIL_SENDING` with a note that
+delivery is unknown and where to check (Mailgun events for `v:invoice-id`). The regression
+tests that matter: `pipeline.retry.test.ts` (real BullMQ + Postgres + Redis + the real
+`mailgun.js` client against a local stub: 503, then OK → `SENT` after exactly 2 calls),
+`invoices.lease.test.ts` and `invoices.leaseMonitor.test.ts`.
 
 ## Engineering principles
 

@@ -1,28 +1,26 @@
 import type { Queue } from "bullmq";
 import type { Database } from "@/db/client";
 import { SWEEPER_BATCH_SIZE } from "@/constants";
-import type { findStuckInvoices } from "@/repositories/invoices.repository";
+import type { findExpiredLeases, findStuckInvoices } from "@/repositories/invoices.repository";
+import type { StatusService } from "@/services/invoiceStatus.service";
 import type { InvoiceStatus } from "@/types/invoice.types";
 import type { EmailJobData, PdfJobData } from "@/types/queue.types";
 import type { Logger } from "@/utils/logger";
 
 export interface SweeperInvoicesRepository {
   readonly findStuck: typeof findStuckInvoices;
+  readonly findExpiredLeases: typeof findExpiredLeases;
 }
 
 export interface SweeperDeps {
   readonly db: Database;
   readonly invoices: SweeperInvoicesRepository;
+  readonly status: Pick<StatusService, "claim">;
   readonly pdfQueue: Pick<Queue<PdfJobData>, "add">;
   readonly emailQueue: Pick<Queue<EmailJobData>, "add">;
   readonly stuckTimeoutMs: number;
   readonly logger: Logger;
 }
-
- * a worker may genuinely still be mid-job there, so re-adding a job risks racing it; a
- * genuinely stuck one is instead caught by the staleBefore-gated self-transition inside
- * invoicePdf.service.ts / invoiceEmail.service.ts, surfaced via a warn log, and resolved by a
- * human through POST /api/invoices/:id/retry. */
 const STUCK_STATUSES: readonly InvoiceStatus[] = ["PENDING", "PDF_READY"];
 
 export async function sweepStuckInvoices(deps: SweeperDeps): Promise<number> {
@@ -57,6 +55,52 @@ export async function sweepStuckInvoices(deps: SweeperDeps): Promise<number> {
   return stuckInvoices.length;
 }
 
+function expiredLeaseError(invoice: { id: string; status: InvoiceStatus }): string {
+  if (invoice.status === "EMAIL_SENDING") {
+    return (
+      "Email sending was interrupted (the worker stopped renewing its claim). It is UNKNOWN whether the email " +
+      `was delivered: check Mailgun events for v:invoice-id=${invoice.id} before retrying, a blind retry may send a duplicate.`
+    );
+  }
+  return "PDF rendering was interrupted (the worker stopped renewing its claim); nothing was sent, safe to retry.";
+}
+
+export async function failExpiredLeases(deps: SweeperDeps): Promise<number> {
+  const expired = await deps.invoices.findExpiredLeases(deps.db, { limit: SWEEPER_BATCH_SIZE });
+  let failed = 0;
+
+  for (const invoice of expired) {
+    try {
+      const updated = await deps.status.claim(
+        deps.db,
+        deps,
+        invoice.id,
+        [invoice.status],
+        "FAILED",
+        { lastError: expiredLeaseError(invoice) },
+        { requireExpiredLease: true },
+      );
+
+      if (updated) {
+        failed += 1;
+        deps.logger.error("Lease monitor failed an invoice whose executor stopped renewing its claim", {
+          invoiceId: invoice.id,
+          previousStatus: invoice.status,
+          leaseUntil: invoice.leaseUntil,
+          deliveryUnknown: invoice.status === "EMAIL_SENDING",
+        });
+      }
+    } catch (err) {
+      deps.logger.error("Lease monitor failed to process an expired lease", {
+        invoiceId: invoice.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  return failed;
+}
+
 export interface SweeperHandle {
   stop(): void;
 }
@@ -65,6 +109,9 @@ export function startSweeper(deps: SweeperDeps, intervalMs: number): SweeperHand
   const timer = setInterval(() => {
     sweepStuckInvoices(deps).catch((err: unknown) => {
       deps.logger.error("Sweeper pass failed", { error: err instanceof Error ? err.message : String(err) });
+    });
+    failExpiredLeases(deps).catch((err: unknown) => {
+      deps.logger.error("Lease monitor pass failed", { error: err instanceof Error ? err.message : String(err) });
     });
   }, intervalMs);
   timer.unref();

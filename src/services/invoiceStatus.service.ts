@@ -20,15 +20,6 @@ export interface StatusService {
   readonly transition: typeof transition;
 }
 
-/**
- *
- *
- * When `from` includes `to` (a legitimate sequential retry re-entering its own in-flight
- * status), pass `options.staleBefore` — see updateInvoiceStatus's doc comment for why that
- * guard is required to keep a *self*-transition from also admitting a truly concurrent
- * duplicate claim.
- *
- */
 export async function claim(
   db: Database,
   deps: TransitionDeps,
@@ -72,8 +63,9 @@ export async function transition(
   from: readonly InvoiceStatus[],
   to: InvoiceStatus,
   patch: InvoiceStatusPatch = {},
+  options: UpdateInvoiceStatusOptions = {},
 ): Promise<InvoiceRow> {
-  const updated = await claim(db, deps, invoiceId, from, to, patch);
+  const updated = await claim(db, deps, invoiceId, from, to, patch, options);
 
   if (!updated) {
     throw AppError.conflict(

@@ -1,5 +1,6 @@
 import { UnrecoverableError } from "bullmq";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ClaimLostError } from "@/services/claimLost.error";
 import { renderAndStoreInvoicePdf, type PdfDeps } from "@/services/invoicePdf.service";
 import type { Logger } from "@/utils/logger";
 
@@ -44,6 +45,7 @@ function buildDeps(overrides: Partial<PdfDeps> = {}): PdfDeps {
     emailQueue: { add: vi.fn(async () => undefined as never) },
     maxBytes: 5_000_000,
     timeoutMs: 20_000,
+    leaseMs: 120_000,
     logger: fakeLogger(),
     ...overrides,
   };
@@ -67,10 +69,13 @@ describe("renderAndStoreInvoicePdf", () => {
     });
   });
 
-  it("does nothing further when claim returns null (lost the race to another attempt)", async () => {
-    const deps = buildDeps({ status: { claim: vi.fn(async () => null), transition: vi.fn() } });
+  it("fails the attempt (does not silently complete) when claim returns null and another executor holds the invoice", async () => {
+    const deps = buildDeps({
+      invoices: { findById: vi.fn(async () => ({ ...INVOICE, status: "PDF_RENDERING" }) as never) },
+      status: { claim: vi.fn(async () => null), transition: vi.fn() },
+    });
 
-    await renderAndStoreInvoicePdf(INVOICE_ID, deps);
+    await expect(renderAndStoreInvoicePdf(INVOICE_ID, deps)).rejects.toBeInstanceOf(ClaimLostError);
 
     expect(htmlToPdfMock).not.toHaveBeenCalled();
     expect(deps.documents.upsert).not.toHaveBeenCalled();
@@ -78,11 +83,24 @@ describe("renderAndStoreInvoicePdf", () => {
     expect(deps.emailQueue.add).not.toHaveBeenCalled();
   });
 
-  it("claims from PENDING or a stale PDF_RENDERING, into PDF_RENDERING, with staleBefore derived from timeoutMs", async () => {
-    const deps = buildDeps({ timeoutMs: 20_000 });
-    const before = Date.now();
+  it.each(["PDF_READY", "EMAIL_SENDING", "SENT", "FAILED"])(
+    "a lost claim on an invoice that is already %s finishes without rendering",
+    async (status) => {
+      const deps = buildDeps({
+        invoices: { findById: vi.fn(async () => ({ ...INVOICE, status }) as never) },
+        status: { claim: vi.fn(async () => null), transition: vi.fn() },
+      });
 
-    await renderAndStoreInvoicePdf(INVOICE_ID, deps);
+      await expect(renderAndStoreInvoicePdf(INVOICE_ID, deps)).resolves.toBeUndefined();
+
+      expect(htmlToPdfMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("claims from PENDING or its own in-flight PDF_RENDERING with the executor's token and the configured lease", async () => {
+    const deps = buildDeps({ leaseMs: 90_000 });
+
+    await renderAndStoreInvoicePdf(INVOICE_ID, deps, "pdf-abc");
 
     expect(deps.status.claim).toHaveBeenCalledWith(
       deps.db,
@@ -91,22 +109,26 @@ describe("renderAndStoreInvoicePdf", () => {
       ["PENDING", "PDF_RENDERING"],
       "PDF_RENDERING",
       {},
-      { staleBefore: expect.any(Date) },
+      { claimToken: "pdf-abc", leaseMs: 90_000 },
     );
-    const [, , , , , , options] = vi.mocked(deps.status.claim).mock.calls[0] as [
-      unknown,
-      unknown,
-      unknown,
-      unknown,
-      unknown,
-      unknown,
-      { staleBefore: Date },
-    ];
-    // staleBefore must be ~timeoutMs in the past, not in the future and not "just now" --
-    // otherwise a render that is genuinely still in flight could be claimed a second time.
-    const age = before - options.staleBefore.getTime();
-    expect(age).toBeGreaterThanOrEqual(20_000);
-    expect(age).toBeLessThan(20_000 + 5_000);
+  });
+
+  it("hands the claim back (PDF_RENDERING -> PENDING) when the render fails with a retryable error", async () => {
+    htmlToPdfMock.mockRejectedValue(new Error("chromium crashed"));
+    const deps = buildDeps();
+
+    await expect(renderAndStoreInvoicePdf(INVOICE_ID, deps, "pdf-abc")).rejects.toThrow("chromium crashed");
+
+    expect(deps.status.transition).toHaveBeenCalledWith(
+      deps.db,
+      deps,
+      INVOICE_ID,
+      ["PDF_RENDERING"],
+      "PENDING",
+      { lastError: "chromium crashed" },
+      { claimToken: "pdf-abc" },
+    );
+    expect(deps.emailQueue.add).not.toHaveBeenCalled();
   });
 
   it("renders from the invoice's items and snapshot, stores the PDF, and transitions to PDF_READY", async () => {
@@ -133,6 +155,7 @@ describe("renderAndStoreInvoicePdf", () => {
       ["PDF_RENDERING"],
       "PDF_READY",
       expect.objectContaining({ pdfGeneratedAt: expect.any(Date) }),
+      { claimToken: expect.any(String) },
     );
   });
 
@@ -164,6 +187,7 @@ describe("renderAndStoreInvoicePdf", () => {
       ["PDF_RENDERING"],
       "PDF_READY",
       expect.anything(),
+      { claimToken: expect.any(String) },
     );
   });
 
@@ -180,17 +204,27 @@ describe("renderAndStoreInvoicePdf", () => {
       ["PDF_RENDERING"],
       "FAILED",
       expect.objectContaining({ lastError: expect.stringContaining("exceeding the 4-byte limit") }),
+      { claimToken: expect.any(String) },
     );
     expect(deps.documents.upsert).not.toHaveBeenCalled();
     expect(deps.emailQueue.add).not.toHaveBeenCalled();
   });
 
-  it("lets a retryable rendering failure (e.g. a Chromium crash) propagate untouched -- BullMQ's attempts/backoff and pdf.worker.ts own that decision, not this function", async () => {
+  it("lets a retryable rendering failure (e.g. a Chromium crash) propagate -- after handing the claim back; whether it was the last attempt is pdf.worker.ts's decision", async () => {
     const deps = buildDeps();
     htmlToPdfMock.mockRejectedValue(new Error("Chromium crashed"));
 
     await expect(renderAndStoreInvoicePdf(INVOICE_ID, deps)).rejects.toThrow("Chromium crashed");
 
-    expect(deps.status.transition).not.toHaveBeenCalled();
+    expect(deps.status.transition).toHaveBeenCalledTimes(1);
+    expect(deps.status.transition).toHaveBeenCalledWith(
+      deps.db,
+      deps,
+      INVOICE_ID,
+      ["PDF_RENDERING"],
+      "PENDING",
+      { lastError: "Chromium crashed" },
+      { claimToken: expect.any(String) },
+    );
   });
 });

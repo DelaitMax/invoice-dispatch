@@ -41,6 +41,8 @@ export const invoices = pgTable(
     failedAt: timestamp("failed_at", { withTimezone: true }),
     lastError: text("last_error"),
     providerMessageId: text("provider_message_id"),
+    claimToken: text("claim_token"),
+    leaseUntil: timestamp("lease_until", { withTimezone: true }),
     idempotencyKey: text("idempotency_key"),
     requestHash: text("request_hash"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -52,6 +54,9 @@ export const invoices = pgTable(
       .where(sql`${t.idempotencyKey} is not null`),
     index("invoices_status_created_at_idx").on(t.status, t.createdAt),
     index("invoices_recipient_email_idx").on(t.recipientEmail),
+    index("invoices_lease_until_idx")
+      .on(t.leaseUntil)
+      .where(sql`${t.leaseUntil} is not null`),
     check("invoices_total_minor_check", sql`${t.totalMinor} >= 0`),
   ],
 );
