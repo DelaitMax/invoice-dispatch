@@ -420,3 +420,35 @@ reliability over image size, and the first candidate for the scaling split descr
 Authentication and a small operator UI are covered above (see [Frontend](#frontend)). Still out of
 scope: password reset, 2FA, OAuth (email and password only), and a CI/CD pipeline — the deploy is
 manual, and automating it is a separate task.
+
+### Open items
+
+Things deliberately left unsolved, or that behave differently from what you might
+assume. None is hidden state: each is a decision or a known gap.
+
+- **The retry budget is short.** Defaults are 3 attempts with 3 s exponential backoff, about 9 s in
+  total. A _temporary_ Mailgun outage (5xx, no connection) longer than that ends the affected
+  invoices in `FAILED`, to be retried one by one by an admin. Raise `QUEUE_JOB_ATTEMPTS` /
+  `QUEUE_BACKOFF_DELAY_MS`; a pause-and-alert breaker for sustained 5xx (like the one for
+  configuration errors) is not implemented.
+- **A duplicate email is still possible** in two cases: the connection drops _after_ Mailgun
+  accepted the message (the retry sends again), and BullMQ restarts a job whose previous run lost
+  its lock but is still alive (the same job id re-takes its own claim, by design). Mailgun has no
+  idempotency key; the lease and claim fencing only prevent the _concurrent_ and the _stale-writer_
+  cases.
+- **Invoices created before migration 0003 have no owner** (`created_by` is NULL), so they are
+  readable by admins only. The owner cannot be reconstructed (`invoice_requests` had no user
+  column); set `created_by` by hand if existing users must keep access to their old invoices.
+- **No way to create non-admin accounts in production.** Registration is closed there by default
+  (`REGISTRATION_ENABLED`); the only account is the `ADMIN_EMAIL` bootstrap. Invites or
+  admin-created users are not implemented. The frontend's register page is still reachable and
+  just shows the API's `REGISTRATION_DISABLED` error.
+- **The address book can still be probed by a logged-in user**: `404 CLIENT_NOT_FOUND` vs `202`
+  tells whether an email is a client. Only the per-account quota (`USER_INVOICE_RATE_LIMIT_*`)
+  bounds it.
+- **`API_KEY` is intentionally not required in `docker-compose.prod.yml`** — the browser frontend
+  cannot hold a shared secret. Access control is closed registration plus per-owner access.
+- **The rate limiter fails open** while Redis is down (by design, with a `warn`), and also for the
+  first few milliseconds after a process starts, until its Redis connection is ready.
+- `invoices.failed_at` exists in the schema but nothing writes it; `lastError` and the event log
+  are the source of truth for when and why an invoice failed.
