@@ -2,8 +2,7 @@
 
 Accepts an invoice request for an existing client, renders it to a PDF, and emails it —
 asynchronously, reliably, and idempotently.
-This README is the practical "how do I run this" guide, plus a summary of the
-design decisions.
+This README is the practical "how do I run this" guide.
 
 ## Contents
 
@@ -15,9 +14,7 @@ design decisions.
 - [Local development without Docker](#local-development-without-docker)
 - [Frontend](#frontend)
 - [Testing](#testing)
-- [Design decisions](#design-decisions)
-- [Engineering principles](#engineering-principles)
-- [Known limitations / explicitly out of scope](#known-limitations--explicitly-out-of-scope)
+- [Who can see and send what](#who-can-see-and-send-what)
 
 ## Quickstart
 
@@ -137,8 +134,7 @@ job payload shapes, the status machine, the repository layer — is shared code,
 **The status machine** (`invoices.status`): `PENDING → PDF_RENDERING → PDF_READY →
 EMAIL_SENDING → SENT`, with `FAILED` reachable from any in-flight state and `POST
 /:id/retry` resetting `FAILED → PENDING`. Every transition goes through one function
-(`src/services/invoiceStatus.service.ts`) built around a single conditional SQL statement —
-see [ADR-2](#design-decisions) below for why that matters more than it sounds like it should.
+(`src/services/invoiceStatus.service.ts`) built around a single conditional SQL statement.
 
 ## API reference
 
@@ -147,7 +143,7 @@ Full OpenAPI document at `/docs/openapi.json` (or browse `/docs` in dev). Summar
 | Method | Path                      | Notes                                                                                                                                                                                                                                                                                                               |
 | ------ | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `POST` | `/api/invoices`           | `202` (or `200` on an idempotent replay). Body: `{ email, items: [{ description, quantity?, unitAmountMinor }], currency?, notes? }`. `.strict()` — sending `totalMinor` or an item's `amountMinor` is a `400`, not a silently ignored field, because those are server-computed. Optional `Idempotency-Key` header. |
-| `GET`  | `/api/invoices/:id`       | Status, computed totals, line items, and the client/company data as it was billed (from the frozen snapshot — see ADR-8), not a live lookup.                                                                                                                                                                        |
+| `GET`  | `/api/invoices/:id`       | Status, computed totals, line items, and the client/company data as it was billed (from the frozen snapshot), not a live lookup.                                                                                                                                                                                    |
 | `GET`  | `/api/invoices/:id/pdf`   | `200` + the PDF once it exists; `409 PDF_NOT_READY` before that.                                                                                                                                                                                                                                                    |
 | `POST` | `/api/invoices/:id/retry` | Only from `FAILED`; otherwise `409 INVOICE_NOT_RETRYABLE`. `role: admin` only — `403 ADMIN_REQUIRED` otherwise.                                                                                                                                                                                                     |
 | `GET`  | `/health`                 | Liveness — always `200`, never touches a dependency.                                                                                                                                                                                                                                                                |
@@ -274,100 +270,10 @@ pnpm test:coverage
 ```
 
 Unit tests mock or inject every external dependency (repositories are called through a narrow
-`typeof`-derived interface per service, never imported directly by the service itself — see
-[SOLID D](#engineering-principles)) and run with zero network access; this was
+`typeof`-derived interface per service, never imported directly by the service itself)) and run with zero network access; this was
 verified during development by stopping Postgres entirely and confirming the unit suite still
 passes. Integration tests run against a real database and Redis and include the key scenario: the same email job executed twice
 _concurrently_ must call the mail provider exactly once (`tests/integration/pipeline.duplicate.test.ts`).
-
-## Design decisions
-
-Summary of the key decisions:
-
-- **ADR-1 — layered structure.** `routes → controllers → services → repositories`, each layer
-  only aware of the one below it; services receive their dependencies as an explicit `deps`
-  parameter rather than importing singletons, so they're unit-testable without a database.
-- **ADR-2 — one status-transition function, one conditional SQL statement.** Every status
-  change goes through `src/services/invoiceStatus.service.ts`, built on `UPDATE ... WHERE id =
-:id AND status = ANY(:from) RETURNING *`. No read-then-write at the application level, so
-  two workers racing to claim the same invoice can't both "win" — see the duplicate-job note
-  below for why this took a second pass to get fully right.
-- **ADR-3 — Drizzle schema is the source of truth; `db/schema.sql` is a generated artifact,**
-  regenerated with `pnpm db:export-sql` and committed for anyone who'd rather read plain
-  SQL.
-- **ADR-4 — the PDF lives in Postgres (`bytea`), not on local disk.** Any worker replica can
-  serve `GET /:id/pdf`; only `invoiceId` ever needs to move between processes.
-- **ADR-5 — one Puppeteer/Chromium process per worker,** launched once from an explicit
-  `bootstrap()` (never as a side effect of importing a module) and reused across every render.
-- **ADR-6 — `MAIL_DRIVER` is a required, explicit choice, not a fallback.** `console` is a
-  first-class dev/test driver behind the same `Mailer` interface as the real Mailgun one, not
-  a degraded mode entered when credentials are missing.
-- **ADR-7 — money is integer minor units, always,** computed server-side
-  (`quantity * unitAmountMinor`) regardless of what a client sends; display formatting
-  (`Intl.NumberFormat`) is a separate, pure concern from the arithmetic.
-- **ADR-8 — the billing snapshot is frozen at intake time.** A PDF rendered on retry, possibly
-  days later, shows the client/company/sender data as it was when the invoice was issued, not
-  whatever the live records say now.
-- **ADR-9 — idempotency and correctness live in Postgres; Redis only makes the happy path
-  faster.** BullMQ's own jobId deduplication is real, but it's an optimization: if Redis
-  evicts a completed job's record (or `removeOnComplete` frees the id, which this project uses
-  deliberately — see below), a second pass at the same invoice must still be safe, because the
-  database-level guard is what actually prevents a duplicate.
-
-**A note on the duplicate-email test, because it's worth being honest about:** this took two
-designs, and the first one was wrong in a way the tests could not see. The original rule let a
-status be its own valid `from` state (so a BullMQ retry can re-enter `EMAIL_SENDING`) and
-guarded it with the row's age (`updated_at < now - 120s`) to keep two _concurrent_ calls out.
-That fixed the duplicate — and silently broke every retry: BullMQ backs off for 3–6 s, the
-window was minutes, so each retry lost its claim, logged a warning, returned without throwing,
-and BullMQ deleted the "successful" job. The invoice stayed in `EMAIL_SENDING` forever. The
-tests were green because the unit tests mocked the claim and the integration test only ran the
-concurrent scenario the fix was written for.
-
-The claim now belongs to an _executor_, not to a row's age: `invoices.claim_token` (the BullMQ
-job id) and `invoices.lease_until`. The same job's retry or crash-restart re-takes its own claim
-at once; any other executor is refused until the lease expires. A transient failure hands the
-claim back (`EMAIL_SENDING → PDF_READY`, `PDF_RENDERING → PENDING`); a worker that loses a claim
-**throws** instead of returning (a returned job is a deleted job); and the lease monitor in the
-sweeper fails in-flight invoices whose lease expired — for `EMAIL_SENDING` with a note that
-delivery is unknown and where to check (Mailgun events for `v:invoice-id`). The regression
-tests that matter: `pipeline.retry.test.ts` (real BullMQ + Postgres + Redis + the real
-`mailgun.js` client against a local stub: 503, then OK → `SENT` after exactly 2 calls),
-`invoices.lease.test.ts` and `invoices.leaseMonitor.test.ts`.
-
-## How a failed send is treated
-
-Decided by whose problem it is (`src/mail/errors.ts`): **permanent** (a genuine 400, 406, 413 —
-the invoice's own: bad address, suppression list, oversize) fails the invoice at once;
-**configuration** (401, 403, 404 — a rotated key, the wrong US/EU host, an unknown domain) never
-fails an invoice — it is handed back untouched, the email queue is paused (`MAIL_CONFIG_PAUSE_MS`,
-resumed automatically or by a worker restart) and an `ALERT: queue paused` error is logged with
-`alert: "QUEUE_PAUSED"`; **temporary** (no response, timeout, 429, 5xx) is retried with backoff and
-only fails the invoice when the attempts are used up.
-
-One trap worth knowing: `mailgun.js` reports a failure with **no HTTP response at all**
-(`ECONNREFUSED`, a reset socket, a timeout) as `status: 400` — the same status as a genuine
-"Bad Request". The field that tells them apart is `message`: the HTTP reason phrase when the
-server answered, the transport error code (`ECONNRESET`, …) when it did not. This is pinned
-against the real library in `tests/integration/mailgun.errors.test.ts`, not against hand-made
-errors. Every request has a timeout (`MAILGUN_TIMEOUT_MS`), so a hung connection can no longer
-hold a worker slot forever. As with any at-least-once retry, a connection that drops _after_
-Mailgun accepted the message can produce a duplicate; Mailgun has no idempotency key.
-
-## When Redis is down
-
-Redis only speeds up the happy path (ADR-9), so an outage must degrade, not hang. Two kinds of
-connection, on purpose: everything on a request path (the rate limiter, `/health/ready`, the
-queue **producers** that `add` jobs) shares a **fail-fast** client — `enableOfflineQueue: false`,
-`commandTimeout`, one retry — so a dead Redis is a quick error instead of a command that waits
-for the reconnect forever; only the BullMQ **workers** use `maxRetriesPerRequest: null`, which
-is what their blocking commands need. Result: the limiter fails open with a `warn`, invoice
-creation commits and answers 202 (the enqueue is best-effort, bounded by
-`QUEUE_ENQUEUE_TIMEOUT_MS`, and the sweeper picks the invoice up), and readiness answers 503
-within `HEALTH_CHECK_TIMEOUT_MS`. The limiter uses a small stateless store
-(`src/lib/redisRateLimitStore.ts`) instead of `rate-limit-redis`: that library caches the
-promise of its start-up script load, so a process that started during an outage would keep a
-permanently dead limiter. Covered by `tests/integration/redisDown.test.ts`.
 
 ## Who can see and send what
 
@@ -380,75 +286,3 @@ per account. In production `POST /auth/register` is closed (`REGISTRATION_ENABLE
 way to get a session is an account the operator created. `API_KEY` is deliberately not mandatory in
 `docker-compose.prod.yml`: the browser frontend can't keep a shared secret, so it was never real
 protection there.
-
-## Engineering principles
-
-**SOLID.** Single Responsibility: one file per concern (a repository per table, one service
-per pipeline stage). Open/Closed: a new mail provider is a new file implementing `Mailer`, not
-a change to the workers that call it. Liskov: `console` and `mailgun` drivers are fully
-interchangeable behind that interface, and `claim()`/`transition()` are only ever called with
-consistent status-machine invariants. Interface Segregation: each service declares its own
-narrow `typeof`-derived slice of a repository's functions rather than depending on the whole
-module. **Dependency Inversion: no service imports `env` or the database/Redis singletons
-directly** — everything external arrives via a `deps` parameter; only controllers and
-`src/worker.ts` (the composition roots) wire concrete implementations in.
-
-**12-factor.** Config is entirely environment variables, validated once at startup
-(`src/config/env.ts`) — no config files, no environment-name branching for anything except log
-pretty-printing. Dev/prod parity: the same Docker image runs both, `docker-compose.prod.yml`
-only changes environment values and published ports, not code paths. Logs are structured JSON
-to stdout (pino) — the process never writes to a log file. Admin/one-off tasks
-(`db:migrate`, `db:seed`, `db:export-sql`, `docs:export`) are scripts run against the same
-codebase and config, not separate tooling.
-
-**Scaling.** `api` and `worker` scale independently (stateless, horizontally). PDF rendering
-is the current bottleneck (`QUEUE_PDF_CONCURRENCY`, one Chromium per worker process) — the
-first thing to split out if load grew, as its own service with its own image (dropping the
-~500 MB Chromium dependency from the API/email path entirely). The mail provider's quota is
-already guarded by a BullMQ rate limiter on the email queue (`EMAIL_RATE_LIMIT_MAX`/
-`_DURATION_MS`), which throttles job pickup without touching `QUEUE_JOB_ATTEMPTS`.
-
-## Known limitations / explicitly out of scope
-
-No client/company CRUD (seeded/managed directly in the database);
-no multi-tenancy (the `admin`/`user` roles are global, not per-organization);
-no webhook-based delivery-status updates from Mailgun
-(delivery is considered done once the provider accepts the message). The Docker image is
-heavier than ideal (~500 MB, `bookworm-slim` + Chromium) — a deliberate trade-off for
-reliability over image size, and the first candidate for the scaling split described above.
-
-Authentication and a small operator UI are covered above (see [Frontend](#frontend)). Still out of
-scope: password reset, 2FA, OAuth (email and password only), and a CI/CD pipeline — the deploy is
-manual, and automating it is a separate task.
-
-### Open items
-
-Things deliberately left unsolved, or that behave differently from what you might
-assume. None is hidden state: each is a decision or a known gap.
-
-- **The retry budget is short.** Defaults are 3 attempts with 3 s exponential backoff, about 9 s in
-  total. A _temporary_ Mailgun outage (5xx, no connection) longer than that ends the affected
-  invoices in `FAILED`, to be retried one by one by an admin. Raise `QUEUE_JOB_ATTEMPTS` /
-  `QUEUE_BACKOFF_DELAY_MS`; a pause-and-alert breaker for sustained 5xx (like the one for
-  configuration errors) is not implemented.
-- **A duplicate email is still possible** in two cases: the connection drops _after_ Mailgun
-  accepted the message (the retry sends again), and BullMQ restarts a job whose previous run lost
-  its lock but is still alive (the same job id re-takes its own claim, by design). Mailgun has no
-  idempotency key; the lease and claim fencing only prevent the _concurrent_ and the _stale-writer_
-  cases.
-- **Invoices created before migration 0003 have no owner** (`created_by` is NULL), so they are
-  readable by admins only. The owner cannot be reconstructed (`invoice_requests` had no user
-  column); set `created_by` by hand if existing users must keep access to their old invoices.
-- **No way to create non-admin accounts in production.** Registration is closed there by default
-  (`REGISTRATION_ENABLED`); the only account is the `ADMIN_EMAIL` bootstrap. Invites or
-  admin-created users are not implemented. The frontend's register page is still reachable and
-  just shows the API's `REGISTRATION_DISABLED` error.
-- **The address book can still be probed by a logged-in user**: `404 CLIENT_NOT_FOUND` vs `202`
-  tells whether an email is a client. Only the per-account quota (`USER_INVOICE_RATE_LIMIT_*`)
-  bounds it.
-- **`API_KEY` is intentionally not required in `docker-compose.prod.yml`** — the browser frontend
-  cannot hold a shared secret. Access control is closed registration plus per-owner access.
-- **The rate limiter fails open** while Redis is down (by design, with a `warn`), and also for the
-  first few milliseconds after a process starts, until its Redis connection is ready.
-- `invoices.failed_at` exists in the schema but nothing writes it; `lastError` and the event log
-  are the source of truth for when and why an invoice failed.
